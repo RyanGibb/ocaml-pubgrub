@@ -28,9 +28,21 @@ module Make (N : Types.NAME) (V : Types.VERSION) = struct
 
   let find_for_name n t = NameMap.find_opt n t |> Option.value ~default:[]
 
+  (* Walk two lists in parallel, returning whichever empties first. *)
+  let pick_smaller la lb =
+    let rec go ca cb =
+      match (ca, cb) with [], _ -> la | _, [] -> lb | _ :: ra, _ :: rb -> go ra rb
+    in
+    go la lb
+
   let mem incomp t =
     match incomp_names incomp with
     | [] -> false
-    | first :: _ ->
-        List.exists (fun i' -> equal_terms i'.terms incomp.terms) (find_for_name first t)
+    | first :: rest ->
+        let bucket =
+          List.fold_left
+            (fun acc n -> pick_smaller acc (find_for_name n t))
+            (find_for_name first t) rest
+        in
+        List.exists (fun i' -> equal_terms i'.terms incomp.terms) bucket
 end
