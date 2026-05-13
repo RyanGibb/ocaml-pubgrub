@@ -16,183 +16,71 @@ let set_debug enabled = debug_enabled := enabled
 
 module Make (N : NAME) (V : VERSION) = struct
   include Types.Make (N) (V)
-
-  type assignment =
-    | Decision of package
-    | RootDecision
-    | Derivation of term * incompatibility
-
-  type solution = (assignment * decision_level) list
+  module PS = Partial_solution.Make (N) (V)
 
   type state = {
     incomps : incompatibility list;
-    solution : solution;
     decision_level : decision_level;
+    partial_solution : PS.t;
   }
-
-  let pp_assignment fmt = function
-    | Decision package -> Format.fprintf fmt "Decision %a" pp_package package
-    | RootDecision -> Format.fprintf fmt "Decision root"
-    | Derivation (term, cause) ->
-        Format.fprintf fmt "Derivation %a due to incompatibility %a" pp_term term
-          pp_incompatibility cause
-
-  let pp_solution fmt =
-    Format.(
-      pp_print_list
-        ~pp_sep:(fun fmt () -> Format.pp_print_string fmt ", ")
-        (fun fmt (a, d) -> fprintf fmt "(%d: %a)" d pp_assignment a))
-      fmt
-
-  let assignment_name = function
-    | Decision (n, _) -> Name n
-    | RootDecision -> Root
-    | Derivation ((_, name, _), _) -> name
-
-  (* Compute the effective range for a name from the solution, and whether
-     there's any positive derivation for it. *)
-  let solution_range n solution =
-    let rec aux has_pos = function
-      | [] -> (has_pos, Ranges.full)
-      | (Decision (n', v), _) :: _ when N.compare n' n = 0 -> (true, Ranges.singleton v)
-      | (Derivation ((Pos, Name n', r), _), _) :: rest when N.compare n' n = 0 ->
-          let _, sr = aux true rest in
-          (true, Ranges.intersection r sr)
-      | (Derivation ((Neg, Name n', r), _), _) :: rest when N.compare n' n = 0 ->
-          let has_pos, sr = aux has_pos rest in
-          (has_pos, Ranges.intersection (Ranges.complement r) sr)
-      | _ :: rest -> aux has_pos rest
-    in
-    aux false solution
-
-  let root_selected solution =
-    List.exists (fun (a, _) -> match a with RootDecision -> true | _ -> false) solution
-
-  let term_status solution (pol, name, vs) =
-    match name with
-    | Root -> (
-        let selected = root_selected solution in
-        match (selected, pol) with
-        | true, Pos -> Satisfied
-        | true, Neg -> Contradicted
-        | false, Pos -> Undetermined
-        | false, Neg -> Satisfied)
-    | Name n -> (
-        let has_positive, sr = solution_range n solution in
-        match (has_positive, pol) with
-        | false, Pos -> Contradicted
-        | false, Neg ->
-            if Ranges.is_disjoint sr vs then Satisfied
-            else if Ranges.subset_of sr vs then Contradicted
-            else Undetermined
-        | true, _ ->
-            if Ranges.subset_of sr vs then
-              match pol with Pos -> Satisfied | Neg -> Contradicted
-            else if Ranges.is_disjoint sr vs then
-              match pol with Pos -> Contradicted | Neg -> Satisfied
-            else Undetermined)
-
-  let incompatibility_status solution incomp : incomp_status =
-    let rec aux s = function
-      | [] -> s
-      | t :: ts -> (
-          match (s, term_status solution t) with
-          | All_satisfied, Satisfied -> aux All_satisfied ts
-          | All_satisfied, Undetermined -> aux (Almost_satisfied t) ts
-          | Almost_satisfied t, Satisfied -> aux (Almost_satisfied t) ts
-          | Almost_satisfied _, Undetermined -> aux Incomp_undetermined ts
-          | Some_contradicted, _ -> Some_contradicted
-          | _, Contradicted -> Some_contradicted
-          | Incomp_undetermined, _ -> aux Incomp_undetermined ts)
-    in
-    aux All_satisfied incomp.terms
 
   let rec conflict_resolution state original_incomp incomp :
       (state * incompatibility * term, incompatibility) Result.t =
     debug_printf "conflict resolution on: %a\n" pp_incompatibility incomp;
-    let rec find_earliest_satisfier incomp = function
-      | [] -> []
-      | assignment :: assignments -> (
-          match find_earliest_satisfier incomp assignments with
-          | [] -> (
-              match incompatibility_status (assignment :: assignments) incomp with
-              | All_satisfied -> assignment :: assignments
-              | _ -> [])
-          | solution -> solution)
-    in
-    let rec find_previous_satisfier satisfier incomp = function
-      | [] -> []
-      | assignment :: assignments -> (
-          match find_previous_satisfier satisfier incomp assignments with
-          | [] -> (
-              match
-                incompatibility_status (satisfier :: assignment :: assignments) incomp
-              with
-              | All_satisfied -> assignment :: assignments
-              | _ -> [])
-          | solution -> solution)
-    in
     match incomp.terms with
     | [] -> Error incomp
     | [ (Pos, Root, _) ] -> Error incomp
     | _ -> (
-        let (satisfier, satisfier_decision_level), assignments =
-          match find_earliest_satisfier incomp state.solution with
-          | assignment :: assignments -> (assignment, assignments)
-          | _ -> failwith "Incompatibility not satisfied"
-        in
-        debug_printf "satisfiying assignment on level %d: %a\n" satisfier_decision_level
-          pp_assignment satisfier;
-        let term =
-          let name = assignment_name satisfier in
-          List.find (fun t -> compare_name (term_name t) name = 0) incomp.terms
-        in
-        let previous_satisfier_level =
-          match
-            find_previous_satisfier
-              (satisfier, satisfier_decision_level)
-              incomp assignments
-          with
-          | (_, decision_level) :: _ -> decision_level
-          | _ -> 0
-        in
-        match (satisfier, satisfier_decision_level != previous_satisfier_level) with
-        | Decision _, _ | RootDecision, _ | _, true ->
-            debug_printf "backtracking to level %d\n" previous_satisfier_level;
-            let solution =
-              List.filter
-                (fun (_assignment, decision_level) ->
-                  decision_level <= previous_satisfier_level)
-                state.solution
+        match PS.find_earliest_satisfier state.partial_solution incomp with
+        | None -> failwith "Incompatibility not satisfied"
+        | Some ((satisfier, satisfier_decision_level), ps_before) -> (
+            debug_printf "satisfiying assignment on level %d: %a\n"
+              satisfier_decision_level PS.pp_assignment satisfier;
+            let term =
+              let name = PS.assignment_name satisfier in
+              List.find (fun t -> compare_name (term_name t) name = 0) incomp.terms
             in
-            debug_printf "solution: %a\n" pp_solution solution;
-            let incomps =
-              if incomp != original_incomp then (
-                debug_printf "new incompatibility %a\n" pp_incompatibility incomp;
-                incomp :: state.incomps)
-              else state.incomps
+            let previous_satisfier_level =
+              PS.find_previous_satisfier_level ps_before
+                (satisfier, satisfier_decision_level)
+                incomp
             in
-            let state =
-              { incomps; solution; decision_level = previous_satisfier_level }
-            in
-            Ok (state, incomp, term)
-        | Derivation (satisfier_term, cause), _ ->
-            let base_terms =
-              incomp.terms @ cause.terms
-              |> List.filter (fun t -> compare_name (term_name t) (term_name term) <> 0)
-            in
-            let partial_satisfier_term =
-              if term_satisfies satisfier_term term then []
-              else [ term_not_difference satisfier_term term ]
-            in
-            let prior_cause =
-              {
-                terms = normalise_terms (base_terms @ partial_satisfier_term);
-                cause = Derived (incomp, cause);
-              }
-            in
-            debug_printf "prior cause %a\n" pp_incompatibility prior_cause;
-            conflict_resolution state original_incomp prior_cause)
+            match (satisfier, satisfier_decision_level != previous_satisfier_level) with
+            | PS.Decision _, _ | PS.RootDecision, _ | _, true ->
+                debug_printf "backtracking to level %d\n" previous_satisfier_level;
+                let partial_solution =
+                  PS.backtrack state.partial_solution previous_satisfier_level
+                in
+                debug_printf "solution: %a\n" PS.pp_assignments
+                  (PS.assignments partial_solution);
+                let incomps =
+                  if incomp != original_incomp then (
+                    debug_printf "new incompatibility %a\n" pp_incompatibility incomp;
+                    incomp :: state.incomps)
+                  else state.incomps
+                in
+                let state =
+                  { incomps; partial_solution; decision_level = previous_satisfier_level }
+                in
+                Ok (state, incomp, term)
+            | PS.Derivation (satisfier_term, cause), _ ->
+                let base_terms =
+                  incomp.terms @ cause.terms
+                  |> List.filter (fun t ->
+                      compare_name (term_name t) (term_name term) <> 0)
+                in
+                let partial_satisfier_term =
+                  if term_satisfies satisfier_term term then []
+                  else [ term_not_difference satisfier_term term ]
+                in
+                let prior_cause =
+                  {
+                    terms = normalise_terms (base_terms @ partial_satisfier_term);
+                    cause = Derived (incomp, cause);
+                  }
+                in
+                debug_printf "prior cause %a\n" pp_incompatibility prior_cause;
+                conflict_resolution state original_incomp prior_cause))
 
   let rec unit_propagation state changed : (state, incompatibility) Result.t =
     match changed with
@@ -210,28 +98,34 @@ module Make (N : NAME) (V : VERSION) = struct
   and incompat_propagation state changed = function
     | [] -> unit_propagation state changed
     | incomp :: incomps -> (
-        match incompatibility_status state.solution incomp with
+        match PS.incompatibility_status state.partial_solution incomp with
         | All_satisfied -> (
             match conflict_resolution state incomp incomp with
             | Ok (state, incomp, term) ->
-                let assignment = Derivation (negate_term term, incomp) in
+                let assignment = PS.Derivation (negate_term term, incomp) in
                 let _, name, _ = term in
                 debug_printf "new assignment on level %d: %a\n" state.decision_level
-                  pp_assignment assignment;
+                  PS.pp_assignment assignment;
                 let state =
                   {
                     state with
-                    solution = (assignment, state.decision_level) :: state.solution;
+                    partial_solution =
+                      PS.add state.partial_solution state.decision_level assignment;
                   }
                 in
                 unit_propagation state [ name ]
             | Error incomp -> Error incomp)
         | Almost_satisfied term ->
-            let assignment = Derivation (negate_term term, incomp) in
+            let assignment = PS.Derivation (negate_term term, incomp) in
             debug_printf "new assignment on level %d: %a\n" state.decision_level
-              pp_assignment assignment;
-            let solution = (assignment, state.decision_level) :: state.solution in
-            let state = { state with solution } in
+              PS.pp_assignment assignment;
+            let state =
+              {
+                state with
+                partial_solution =
+                  PS.add state.partial_solution state.decision_level assignment;
+              }
+            in
             let _, name, _ = term in
             incompat_propagation state (name :: changed) incomps
         | _ -> incompat_propagation state changed incomps)
@@ -254,32 +148,28 @@ module Make (N : NAME) (V : VERSION) = struct
 
   let make_decision ~versions ~dependencies state =
     let find_undecided_term () =
-      let rec aux best = function
+      let rec aux best visited = function
         | [] -> best
-        | (Derivation ((Pos, Name n, _), _), _) :: solution ->
-            let _, sr = solution_range n state.solution in
-            let real_vs = List.filter (fun v -> Ranges.contains v sr) (versions n) in
-            let decided =
-              List.exists
-                (fun (a, _) ->
-                  match a with Decision (n', _) -> N.compare n' n = 0 | _ -> false)
-                state.solution
-            in
-            if decided then aux best solution
+        | (PS.Derivation ((Pos, Name n, _), _), _) :: rest ->
+            if PS.is_decided state.partial_solution n || PS.NameSet.mem n visited then
+              aux best visited rest
             else
+              let _, sr = PS.name_range state.partial_solution n in
+              let real_vs = List.filter (fun v -> Ranges.contains v sr) (versions n) in
               let count = List.length real_vs in
               let best =
                 match best with
                 | Some (_, _, c) when c <= count -> best
                 | _ -> Some (n, real_vs, count)
               in
-              aux best solution
-        | _ :: solution -> aux best solution
+              aux best (PS.NameSet.add n visited) rest
+        | _ :: rest -> aux best visited rest
       in
-      aux None state.solution |> Option.map (fun (n, vs, _) -> (n, vs))
+      aux None PS.NameSet.empty (PS.assignments state.partial_solution)
+      |> Option.map (fun (n, vs, _) -> (n, vs))
     in
     let* n, real_vs = find_undecided_term () in
-    let _, sr = solution_range n state.solution in
+    let _, sr = PS.name_range state.partial_solution n in
     debug_printf "deciding on %a: %a\n" N.pp n Ranges.pp sr;
     let decision_level = state.decision_level + 1 in
     match real_vs with
@@ -302,11 +192,13 @@ module Make (N : NAME) (V : VERSION) = struct
             dep_incomps;
         let incomps = dep_incomps @ state.incomps in
         let state = { state with incomps } in
+        let trial_ps =
+          PS.add state.partial_solution decision_level (PS.Decision (n, version))
+        in
         let conflicts =
           List.exists
             (fun i ->
-              let solution = (Decision (n, version), decision_level) :: state.solution in
-              match incompatibility_status solution i with
+              match PS.incompatibility_status trial_ps i with
               | All_satisfied -> true
               | _ -> false)
             dep_incomps
@@ -315,15 +207,16 @@ module Make (N : NAME) (V : VERSION) = struct
           debug_printf "not adding decision due to conflict\n";
           Some (Name n, state))
         else
-          let assignment = Decision (n, version) in
-          debug_printf "assignment on level %d: %a\n" decision_level pp_assignment
+          let assignment = PS.Decision (n, version) in
+          debug_printf "assignment on level %d: %a\n" decision_level PS.pp_assignment
             assignment;
-          let solution = (assignment, decision_level) :: state.solution in
-          let state = { incomps; solution; decision_level } in
+          let state = { incomps; partial_solution = trial_ps; decision_level } in
           Some (Name n, state)
 
   let extract_resolution state =
-    List.filter_map (function Decision pkg, _ -> Some pkg | _ -> None) state.solution
+    List.filter_map
+      (function PS.Decision pkg, _ -> Some pkg | _ -> None)
+      (PS.assignments state.partial_solution)
 
   let init_incomps query =
     List.map
@@ -349,11 +242,9 @@ module Make (N : NAME) (V : VERSION) = struct
     in
     let incomps = init_incomps root_deps in
     debug_printf "initial incompatibilities\n\t%a\n" pp_incompatibilities incomps;
-    (* Root is pre-seeded as RootDecision rather than derived from a
-       {not Root any} incomp via unit propagation. Sits at decision level 0
-       per the spec's example tables. *)
-    let root_assignment = (RootDecision, 0) in
-    solve_loop { incomps; solution = [ root_assignment ]; decision_level = 0 } Root
+    let partial_solution = PS.add PS.empty 0 PS.RootDecision in
+    let initial_state = { incomps; decision_level = 0; partial_solution } in
+    solve_loop initial_state Root
 
   let explain_terms fmt = function
     | [ (Pos, n, vs); (Neg, m, us) ] | [ (Neg, m, us); (Pos, n, vs) ] ->
