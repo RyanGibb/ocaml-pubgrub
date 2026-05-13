@@ -7,6 +7,9 @@ depends: [
   "dune" {>= "3.18"}
   "ocaml" {>= "4.14"}
   "ppx_expect" {with-test}
+  "landmarks" {with-test}
+  "landmarks-ppx" {with-test}
+  "memtrace" {with-test}
   "odoc" {with-doc}
 ]
 build: [

@@ -13,4 +13,7 @@
  (synopsis "PubGrub version solving algorithm")
  (depends
   (ocaml (>= 4.14))
-  (ppx_expect :with-test)))
+  (ppx_expect :with-test)
+  (landmarks :with-test)
+  (landmarks-ppx :with-test)
+  (memtrace :with-test)))

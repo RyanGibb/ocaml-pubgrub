@@ -1,3 +1,5 @@
 (library
  (name pubgrub)
- (public_name pubgrub))
+ (public_name pubgrub)
+ (instrumentation
+  (backend landmarks --auto)))
