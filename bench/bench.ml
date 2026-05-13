@@ -83,9 +83,7 @@ let () =
         | "diamond" -> diamond n 20
         | _ -> failwith (Printf.sprintf "unknown shape: %s" shape)
       in
-      let result, elapsed =
-        time (fun () -> Solver.resolve ~versions ~dependencies query)
-      in
+      let result, elapsed = time (fun () -> Solver.solve ~versions ~dependencies query) in
       let status = match result with Ok _ -> "ok" | Error _ -> "error" in
       Printf.printf "%s n=%d %s %.4fs\n" shape n status elapsed
   | _ ->

@@ -20,7 +20,7 @@ module Make (N : NAME) (V : VERSION) : sig
   type incompatibility
   type query = (N.t * Ranges.t) list
 
-  val resolve :
+  val solve :
     versions:(N.t -> V.t list) ->
     dependencies:(N.t -> V.t -> (N.t * Ranges.t) list) ->
     query ->

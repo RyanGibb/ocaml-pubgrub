@@ -467,7 +467,7 @@ module Make (N : NAME) (V : VERSION) = struct
 
   type query = (N.t * Ranges.t) list
 
-  let resolve ~versions ~dependencies (query : query) :
+  let solve ~versions ~dependencies (query : query) :
       ((N.t * V.t) list, incompatibility) Result.t =
     let root_deps = List.map (fun (name, range) -> (Name name, range)) query in
     let rec solve_loop state next =

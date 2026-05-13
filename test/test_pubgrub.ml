@@ -29,7 +29,7 @@ let solve repo deps query =
   let versions n = Hashtbl.find_all repo_tbl n in
   let dependencies n v = Hashtbl.find_all dep_tbl (n, v) in
   let query = List.map (fun (n, vs) -> (n, Solver.Ranges.of_list vs)) query in
-  let result = Solver.resolve ~versions ~dependencies query in
+  let result = Solver.solve ~versions ~dependencies query in
   Format.printf "%a\n" pp_result result
 
 let%expect_test "example - diamond dependency" =
