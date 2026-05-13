@@ -28,6 +28,11 @@ module Make (N : Types.NAME) (V : Types.VERSION) : sig
 
   val is_decided : t -> N.t -> bool
   val root_selected : t -> bool
+
+  val undecided_pos_names : t -> NameSet.t
+  (** Names that have a Pos derivation but no Decision yet. Candidates for the next
+      decision. *)
+
   val term_status : t -> term -> term_status
   val incompatibility_status : t -> incompatibility -> incomp_status
 

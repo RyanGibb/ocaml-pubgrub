@@ -151,24 +151,16 @@ module Make (N : NAME) (V : VERSION) = struct
 
   let make_decision ~versions ~dependencies state =
     let find_undecided_term () =
-      let rec aux best visited = function
-        | [] -> best
-        | (PS.Derivation ((Pos, Name n, _), _), _) :: rest ->
-            if PS.is_decided state.partial_solution n || PS.NameSet.mem n visited then
-              aux best visited rest
-            else
-              let _, sr = PS.name_range state.partial_solution n in
-              let real_vs = List.filter (fun v -> Ranges.contains v sr) (versions n) in
-              let count = List.length real_vs in
-              let best =
-                match best with
-                | Some (_, _, c) when c <= count -> best
-                | _ -> Some (n, real_vs, count)
-              in
-              aux best (PS.NameSet.add n visited) rest
-        | _ :: rest -> aux best visited rest
-      in
-      aux None PS.NameSet.empty (PS.assignments state.partial_solution)
+      PS.NameSet.fold
+        (fun n best ->
+          let _, sr = PS.name_range state.partial_solution n in
+          let real_vs = List.filter (fun v -> Ranges.contains v sr) (versions n) in
+          let count = List.length real_vs in
+          match best with
+          | Some (_, _, c) when c <= count -> best
+          | _ -> Some (n, real_vs, count))
+        (PS.undecided_pos_names state.partial_solution)
+        None
       |> Option.map (fun (n, vs, _) -> (n, vs))
     in
     let* n, real_vs = find_undecided_term () in
