@@ -12,6 +12,7 @@ module Make (N : Types.NAME) (V : Types.VERSION) = struct
     assignments : (assignment * decision_level) list;
     name_ranges : (bool * Ranges.t) NameMap.t;
     decided_names : NameSet.t;
+    undecided_pos_names : NameSet.t;
     root_selected : bool;
   }
 
@@ -20,6 +21,7 @@ module Make (N : Types.NAME) (V : Types.VERSION) = struct
       assignments = [];
       name_ranges = NameMap.empty;
       decided_names = NameSet.empty;
+      undecided_pos_names = NameSet.empty;
       root_selected = false;
     }
 
@@ -37,6 +39,13 @@ module Make (N : Types.NAME) (V : Types.VERSION) = struct
     | _ -> nr
 
   let update_decided_names ds = function Decision (n, _) -> NameSet.add n ds | _ -> ds
+
+  let update_undecided_pos_names ups ~decided = function
+    | Decision (n, _) -> NameSet.remove n ups
+    | Derivation ((Pos, Name n, _), _) ->
+        if NameSet.mem n decided then ups else NameSet.add n ups
+    | _ -> ups
+
   let update_root_selected rs = function RootDecision -> true | _ -> rs
 
   let add ps lvl a =
@@ -44,24 +53,36 @@ module Make (N : Types.NAME) (V : Types.VERSION) = struct
       assignments = (a, lvl) :: ps.assignments;
       name_ranges = update_name_ranges ps.name_ranges a;
       decided_names = update_decided_names ps.decided_names a;
+      undecided_pos_names =
+        update_undecided_pos_names ps.undecided_pos_names ~decided:ps.decided_names a;
       root_selected = update_root_selected ps.root_selected a;
     }
 
   let backtrack ps level =
     let filtered = List.filter (fun (_, lvl) -> lvl <= level) ps.assignments in
-    let name_ranges, decided_names, root_selected =
+    let name_ranges, decided_names, undecided_pos_names, root_selected =
       List.fold_left
-        (fun (nr, ds, rs) (a, _) ->
-          (update_name_ranges nr a, update_decided_names ds a, update_root_selected rs a))
-        (NameMap.empty, NameSet.empty, false)
+        (fun (nr, ds, ups, rs) (a, _) ->
+          ( update_name_ranges nr a,
+            update_decided_names ds a,
+            update_undecided_pos_names ups ~decided:ds a,
+            update_root_selected rs a ))
+        (NameMap.empty, NameSet.empty, NameSet.empty, false)
         (List.rev filtered)
     in
-    { assignments = filtered; name_ranges; decided_names; root_selected }
+    {
+      assignments = filtered;
+      name_ranges;
+      decided_names;
+      undecided_pos_names;
+      root_selected;
+    }
 
   let assignments ps = ps.assignments
   let name_range ps n = lookup_range n ps.name_ranges
   let is_decided ps n = NameSet.mem n ps.decided_names
   let root_selected ps = ps.root_selected
+  let undecided_pos_names ps = ps.undecided_pos_names
 
   let term_status ps (pol, name, vs) =
     match name with
