@@ -70,6 +70,56 @@ let diamond n m =
   let query = List.init n (fun i -> ("D" ^ v i, Solver.Ranges.singleton (v 0))) in
   (make_solver repo deps, query)
 
+(* Random graph with power-law popularity and geometric version/dep counts. *)
+let realistic n =
+  let rng = Random.State.make [| 42 |] in
+  let geom p =
+    let rec go k =
+      if Random.State.float rng 1.0 < p then k else go (k + 1)
+    in
+    go 0
+  in
+  (* Pick an index in [0, max_idx) biased toward lower values. *)
+  let popular_under max_idx =
+    let r = Random.State.float rng 1.0 in
+    int_of_float (Float.of_int max_idx *. r *. r)
+  in
+  let n_versions = Array.init n (fun _ -> 1 + geom 0.3) in
+  let pkg i = "P" ^ v i in
+  let repo =
+    List.init n (fun i ->
+        List.init n_versions.(i) (fun j -> (pkg i, v j)))
+    |> List.flatten
+  in
+  let deps = ref [] in
+  for i = 1 to n - 1 do
+    for j = 0 to n_versions.(i) - 1 do
+      let chosen = Hashtbl.create 4 in
+      for _ = 1 to geom 0.4 do
+        let target = popular_under i in
+        if not (Hashtbl.mem chosen target) then begin
+          Hashtbl.add chosen target ();
+          let target_nv = n_versions.(target) in
+          let lower = Random.State.int rng ((target_nv + 1) / 2) in
+          let allowed =
+            List.init (target_nv - lower) (fun k -> v (lower + k))
+          in
+          deps :=
+            ((pkg i, v j), (pkg target, Solver.Ranges.of_list allowed))
+            :: !deps
+        end
+      done
+    done
+  done;
+  let n_query = max 1 (n / 20) in
+  let query =
+    List.init n_query (fun k ->
+        let i = n - 1 - k in
+        let nv = n_versions.(i) in
+        (pkg i, Solver.Ranges.of_list (List.init nv (fun j -> v j))))
+  in
+  (make_solver repo !deps, query)
+
 let () =
   let args = Array.to_list Sys.argv |> List.tl in
   match args with
@@ -81,6 +131,7 @@ let () =
         | "wide_fan" -> wide_fan n
         | "conflict_heavy" -> conflict_heavy n 5
         | "diamond" -> diamond n 20
+        | "realistic" -> realistic n
         | _ -> failwith (Printf.sprintf "unknown shape: %s" shape)
       in
       let result, elapsed = time (fun () -> Solver.solve ~versions ~dependencies query) in
@@ -88,5 +139,5 @@ let () =
       Printf.printf "%s n=%d %s %.4fs\n" shape n status elapsed
   | _ ->
       Printf.eprintf "usage: bench <shape> <n>\n";
-      Printf.eprintf "shapes: deep_chain, wide_fan, conflict_heavy, diamond\n";
+      Printf.eprintf "shapes: deep_chain, wide_fan, conflict_heavy, diamond, realistic\n";
       exit 1
