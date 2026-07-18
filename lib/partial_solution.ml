@@ -1,5 +1,6 @@
 module Make (N : Types.NAME) (V : Types.VERSION) = struct
   include Types.Make (N) (V)
+  module NameMap = Map.Make (N)
   module NameSet = Set.Make (N)
 
   type assignment =
@@ -7,36 +8,60 @@ module Make (N : Types.NAME) (V : Types.VERSION) = struct
     | RootDecision
     | Derivation of term * incompatibility
 
-  type t = (assignment * decision_level) list
+  type t = {
+    assignments : (assignment * decision_level) list;
+    name_ranges : (bool * Ranges.t) NameMap.t;
+    decided_names : NameSet.t;
+    root_selected : bool;
+  }
 
-  let empty = []
-  let add ps lvl a = (a, lvl) :: ps
-  let backtrack ps level = List.filter (fun (_, lvl) -> lvl <= level) ps
-  let assignments ps = ps
+  let empty =
+    {
+      assignments = [];
+      name_ranges = NameMap.empty;
+      decided_names = NameSet.empty;
+      root_selected = false;
+    }
 
-  (* Compute the effective range for a name from the assignments, and whether
-     there's any positive derivation for it. *)
-  let name_range ps n =
-    let rec aux has_pos = function
-      | [] -> (has_pos, Ranges.full)
-      | (Decision (n', v), _) :: _ when N.compare n' n = 0 -> (true, Ranges.singleton v)
-      | (Derivation ((Pos, Name n', r), _), _) :: rest when N.compare n' n = 0 ->
-          let _, sr = aux true rest in
-          (true, Ranges.intersection r sr)
-      | (Derivation ((Neg, Name n', r), _), _) :: rest when N.compare n' n = 0 ->
-          let has_pos, sr = aux has_pos rest in
-          (has_pos, Ranges.intersection (Ranges.complement r) sr)
-      | _ :: rest -> aux has_pos rest
+  let lookup_range n nr =
+    Option.value (NameMap.find_opt n nr) ~default:(false, Ranges.full)
+
+  let update_name_ranges nr = function
+    | Decision (n, v) -> NameMap.add n (true, Ranges.singleton v) nr
+    | Derivation ((Pos, Name n, r), _) ->
+        let _, old_r = lookup_range n nr in
+        NameMap.add n (true, Ranges.intersection r old_r) nr
+    | Derivation ((Neg, Name n, r), _) ->
+        let old_pos, old_r = lookup_range n nr in
+        NameMap.add n (old_pos, Ranges.intersection (Ranges.complement r) old_r) nr
+    | _ -> nr
+
+  let update_decided_names ds = function Decision (n, _) -> NameSet.add n ds | _ -> ds
+  let update_root_selected rs = function RootDecision -> true | _ -> rs
+
+  let add ps lvl a =
+    {
+      assignments = (a, lvl) :: ps.assignments;
+      name_ranges = update_name_ranges ps.name_ranges a;
+      decided_names = update_decided_names ps.decided_names a;
+      root_selected = update_root_selected ps.root_selected a;
+    }
+
+  let backtrack ps level =
+    let filtered = List.filter (fun (_, lvl) -> lvl <= level) ps.assignments in
+    let name_ranges, decided_names, root_selected =
+      List.fold_left
+        (fun (nr, ds, rs) (a, _) ->
+          (update_name_ranges nr a, update_decided_names ds a, update_root_selected rs a))
+        (NameMap.empty, NameSet.empty, false)
+        (List.rev filtered)
     in
-    aux false ps
+    { assignments = filtered; name_ranges; decided_names; root_selected }
 
-  let is_decided ps n =
-    List.exists
-      (fun (a, _) -> match a with Decision (n', _) -> N.compare n' n = 0 | _ -> false)
-      ps
-
-  let root_selected ps =
-    List.exists (fun (a, _) -> match a with RootDecision -> true | _ -> false) ps
+  let assignments ps = ps.assignments
+  let name_range ps n = lookup_range n ps.name_ranges
+  let is_decided ps n = NameSet.mem n ps.decided_names
+  let root_selected ps = ps.root_selected
 
   let term_status ps (pol, name, vs) =
     match name with
@@ -77,30 +102,27 @@ module Make (N : Types.NAME) (V : Types.VERSION) = struct
     aux All_satisfied incomp.terms
 
   let find_earliest_satisfier ps incomp =
-    let rec aux = function
+    let oldest_first = List.rev ps.assignments in
+    let rec aux acc = function
       | [] -> None
-      | sat :: rest -> (
-          match aux rest with
-          | None ->
-              if incompatibility_status (sat :: rest) incomp = All_satisfied then
-                Some (sat, rest)
-              else None
-          | some -> some)
+      | (a, lvl) :: rest ->
+          let acc' = add acc lvl a in
+          if incompatibility_status acc' incomp = All_satisfied then Some ((a, lvl), acc)
+          else aux acc' rest
     in
-    aux ps
+    aux empty oldest_first
 
-  let find_previous_satisfier_level ps_before satisfier incomp =
-    let rec aux = function
+  let find_previous_satisfier_level ps_before (sat_a, sat_lvl) incomp =
+    let oldest_first = List.rev ps_before.assignments in
+    let rec aux acc = function
       | [] -> None
-      | sat :: rest -> (
-          match aux rest with
-          | None ->
-              if incompatibility_status (satisfier :: sat :: rest) incomp = All_satisfied
-              then Some (snd sat)
-              else None
-          | some -> some)
+      | (a, lvl) :: rest ->
+          let acc' = add acc lvl a in
+          let with_sat = add acc' sat_lvl sat_a in
+          if incompatibility_status with_sat incomp = All_satisfied then Some lvl
+          else aux acc' rest
     in
-    match aux ps_before with Some lvl -> lvl | None -> 0
+    match aux empty oldest_first with Some lvl -> lvl | None -> 0
 
   let pp_assignment fmt = function
     | Decision package -> Format.fprintf fmt "Decision %a" pp_package package
