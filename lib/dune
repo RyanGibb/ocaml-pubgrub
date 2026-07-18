@@ -1,6 +1,6 @@
 (library
  (name pubgrub)
  (public_name pubgrub)
- (private_modules types partial_solution)
+ (private_modules types partial_solution incompatibilities)
  (instrumentation
   (backend landmarks --auto)))

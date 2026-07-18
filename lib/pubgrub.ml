@@ -17,12 +17,16 @@ let set_debug enabled = debug_enabled := enabled
 module Make (N : NAME) (V : VERSION) = struct
   include Types.Make (N) (V)
   module PS = Partial_solution.Make (N) (V)
+  module Incomp = Incompatibilities.Make (N) (V)
 
   type state = {
-    incomps : incompatibility list;
+    incomps : Incomp.t;
     decision_level : decision_level;
     partial_solution : PS.t;
   }
+
+  let add_incomp state incomp = { state with incomps = Incomp.add incomp state.incomps }
+  let add_incomps state incomps = List.fold_left add_incomp state incomps
 
   let rec conflict_resolution state original_incomp incomp :
       (state * incompatibility * term, incompatibility) Result.t =
@@ -53,14 +57,18 @@ module Make (N : NAME) (V : VERSION) = struct
                 in
                 debug_printf "solution: %a\n" PS.pp_assignments
                   (PS.assignments partial_solution);
-                let incomps =
-                  if incomp != original_incomp then (
-                    debug_printf "new incompatibility %a\n" pp_incompatibility incomp;
-                    incomp :: state.incomps)
-                  else state.incomps
+                let state =
+                  {
+                    state with
+                    partial_solution;
+                    decision_level = previous_satisfier_level;
+                  }
                 in
                 let state =
-                  { incomps; partial_solution; decision_level = previous_satisfier_level }
+                  if incomp != original_incomp then (
+                    debug_printf "new incompatibility %a\n" pp_incompatibility incomp;
+                    add_incomp state incomp)
+                  else state
                 in
                 Ok (state, incomp, term)
             | PS.Derivation (satisfier_term, cause), _ ->
@@ -87,12 +95,7 @@ module Make (N : NAME) (V : VERSION) = struct
     | [] -> Ok state
     | name :: changed ->
         debug_printf "unit propagation on: %a\n" pp_name name;
-        let incomps =
-          List.filter
-            (fun incomp ->
-              List.exists (fun t -> compare_name (term_name t) name = 0) incomp.terms)
-            state.incomps
-        in
+        let incomps = Incomp.find_for_name name state.incomps in
         incompat_propagation state changed incomps
 
   and incompat_propagation state changed = function
@@ -177,21 +180,19 @@ module Make (N : NAME) (V : VERSION) = struct
         let incomp = { terms = [ (Pos, Name n, sr) ]; cause = NoVersions } in
         debug_printf "no versions found, adding incompatiblity %a\n" pp_incompatibility
           incomp;
-        let state = { state with incomps = incomp :: state.incomps } in
+        let state = add_incomp state incomp in
         Some (Name n, state)
     | _ ->
         let version = List.hd (List.sort (fun a b -> V.compare b a) real_vs) in
         debug_printf "trying version %a\n" V.pp version;
         let dep_incomps =
           dependency_incomps ~versions ~dependencies n version
-          |> List.filter (fun i ->
-              not (List.exists (fun i' -> equal_terms i'.terms i.terms) state.incomps))
+          |> List.filter (fun i -> not (Incomp.mem i state.incomps))
         in
         if List.length dep_incomps > 0 then
           debug_printf "dependency incompatibilities\n\t%a\n" pp_incompatibilities
             dep_incomps;
-        let incomps = dep_incomps @ state.incomps in
-        let state = { state with incomps } in
+        let state = add_incomps state dep_incomps in
         let trial_ps =
           PS.add state.partial_solution decision_level (PS.Decision (n, version))
         in
@@ -210,7 +211,7 @@ module Make (N : NAME) (V : VERSION) = struct
           let assignment = PS.Decision (n, version) in
           debug_printf "assignment on level %d: %a\n" decision_level PS.pp_assignment
             assignment;
-          let state = { incomps; partial_solution = trial_ps; decision_level } in
+          let state = { state with partial_solution = trial_ps; decision_level } in
           Some (Name n, state)
 
   let extract_resolution state =
@@ -243,7 +244,9 @@ module Make (N : NAME) (V : VERSION) = struct
     let incomps = init_incomps root_deps in
     debug_printf "initial incompatibilities\n\t%a\n" pp_incompatibilities incomps;
     let partial_solution = PS.add PS.empty 0 PS.RootDecision in
-    let initial_state = { incomps; decision_level = 0; partial_solution } in
+    let initial_state =
+      add_incomps { incomps = Incomp.empty; decision_level = 0; partial_solution } incomps
+    in
     solve_loop initial_state Root
 
   let explain_terms fmt = function
