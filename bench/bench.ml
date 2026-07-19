@@ -1,4 +1,5 @@
 let () = Memtrace.trace_if_requested ()
+let () = if Sys.getenv_opt "BENCH_DEBUG" <> None then Pubgrub.set_debug true
 
 module S = struct
   type t = string
@@ -121,24 +122,62 @@ let realistic n =
   in
   (make_solver repo !deps, query)
 
+(* Every query constraint and every decided package's dependencies must be
+   satisfied by the returned solution. *)
+let validate ~dependencies query solution =
+  let find n = List.find_opt (fun (n', _) -> String.equal n n') solution in
+  let satisfied (n, r) =
+    match find n with Some (_, ver) -> Solver.Ranges.contains ver r | None -> false
+  in
+  List.for_all satisfied query
+  && List.for_all
+       (fun (n, ver) -> List.for_all satisfied (dependencies n ver))
+       solution
+
+let run shape n reps =
+  let (versions, dependencies), query =
+    match shape with
+    | "deep_chain" -> deep_chain n
+    | "wide_fan" -> wide_fan n
+    | "conflict_heavy" -> conflict_heavy n 5
+    | "diamond" -> diamond n 20
+    | "realistic" -> realistic n
+    | _ -> failwith (Printf.sprintf "unknown shape: %s" shape)
+  in
+  let runs =
+    List.init reps (fun _ -> time (fun () -> Solver.solve ~versions ~dependencies query))
+  in
+  let status =
+    match fst (List.hd runs) with
+    | Ok solution -> if validate ~dependencies query solution then "ok" else "INVALID"
+    | Error _ -> "error"
+  in
+  let times = List.map snd runs in
+  let mn = List.fold_left min infinity times in
+  let mean = List.fold_left ( +. ) 0. times /. float_of_int reps in
+  Printf.printf "%s n=%d %s min=%.4fs mean=%.4fs reps=%d\n" shape n status mn mean reps;
+  status <> "INVALID"
+
+let all_shapes =
+  [
+    ("deep_chain", 500);
+    ("wide_fan", 1000);
+    ("conflict_heavy", 100);
+    ("diamond", 200);
+    ("realistic", 1000);
+  ]
+
 let () =
   let args = Array.to_list Sys.argv |> List.tl in
-  match args with
-  | [ shape; n_str ] ->
-      let n = int_of_string n_str in
-      let (versions, dependencies), query =
-        match shape with
-        | "deep_chain" -> deep_chain n
-        | "wide_fan" -> wide_fan n
-        | "conflict_heavy" -> conflict_heavy n 5
-        | "diamond" -> diamond n 20
-        | "realistic" -> realistic n
-        | _ -> failwith (Printf.sprintf "unknown shape: %s" shape)
-      in
-      let result, elapsed = time (fun () -> Solver.solve ~versions ~dependencies query) in
-      let status = match result with Ok _ -> "ok" | Error _ -> "error" in
-      Printf.printf "%s n=%d %s %.4fs\n" shape n status elapsed
-  | _ ->
-      Printf.eprintf "usage: bench <shape> <n>\n";
-      Printf.eprintf "shapes: deep_chain, wide_fan, conflict_heavy, diamond, realistic\n";
-      exit 1
+  let ok =
+    match args with
+    | [ "all" ] -> List.for_all (fun (shape, n) -> run shape n 3) all_shapes
+    | [ shape; n_str ] -> run shape (int_of_string n_str) 1
+    | [ shape; n_str; reps_str ] ->
+        run shape (int_of_string n_str) (int_of_string reps_str)
+    | _ ->
+        Printf.eprintf "usage: bench <shape> <n> [reps] | bench all\n";
+        Printf.eprintf "shapes: deep_chain, wide_fan, conflict_heavy, diamond, realistic\n";
+        exit 1
+  in
+  if not ok then exit 1
