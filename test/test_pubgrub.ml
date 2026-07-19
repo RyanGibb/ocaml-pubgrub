@@ -539,3 +539,41 @@ let%expect_test "shared dependency - collapsing" =
     unit propagation on: b
     b 1, a 2
     |}]
+
+(* An empty dependency range is unsatisfiable, so foo cannot be selected. *)
+let%expect_test "unsatisfiable dependency - empty range" =
+  solve
+    [ ("foo", "1.0.0"); ("bar", "1.0.0") ]
+    [ (("foo", "1.0.0"), ("bar", [])) ]
+    [ ("foo", [ "1.0.0" ]) ];
+  [%expect
+    {|
+    initial incompatibilities
+    (terms: {Root *, not foo 1.0.0}, cause: dependency root -> foo 1.0.0)
+    unit propagation on: Root
+    new assignment on level 0: Derivation foo 1.0.0 due to incompatibility (terms: {Root *, not foo 1.0.0}, cause: dependency root -> foo 1.0.0)
+    unit propagation on: foo
+    deciding on foo: 1.0.0
+    trying version 1.0.0
+    dependency incompatibilities
+    (terms: {foo *}, cause: dependency foo 1.0.0 -> bar ∅)
+    not adding decision due to conflict
+    unit propagation on: foo
+    conflict resolution on: (terms: {foo *}, cause: dependency foo 1.0.0 -> bar ∅)
+    satisfiying assignment on level 0: Derivation foo 1.0.0 due to incompatibility (terms: {Root *, not foo 1.0.0}, cause: dependency root -> foo 1.0.0)
+    prior cause (terms: {Root *}, cause: ((terms: {foo *}, cause: dependency foo 1.0.0 -> bar ∅) and (terms: {Root *, not foo 1.0.0}, cause: dependency root -> foo 1.0.0)))
+    conflict resolution on: (terms: {Root *}, cause: ((terms: {foo *}, cause: dependency foo 1.0.0 -> bar ∅) and (terms: {Root *, not foo 1.0.0}, cause: dependency root -> foo 1.0.0)))
+    Because foo 1.0.0 -> bar ∅ and root -> foo 1.0.0, version solving failed..
+    |}]
+
+(* Likewise for an empty range in the query itself. *)
+let%expect_test "unsatisfiable root dependency - empty range" =
+  solve [ ("foo", "1.0.0") ] [] [ ("foo", []) ];
+  [%expect
+    {|
+    initial incompatibilities
+    (terms: {Root *}, cause: dependency root -> foo ∅)
+    unit propagation on: Root
+    conflict resolution on: (terms: {Root *}, cause: dependency root -> foo ∅)
+    root -> foo ∅
+    |}]

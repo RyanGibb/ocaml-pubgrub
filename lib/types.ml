@@ -130,6 +130,10 @@ module Make (N : NAME) (V : VERSION) = struct
             | Neg, Pos -> replace (Pos, Ranges.difference r' r)))
       terms;
     let result = Hashtbl.fold (fun name (pol, r) acc -> (pol, name, r) :: acc) tbl [] in
+    (* a negative term over the empty range is a tautology: drop it *)
+    let result =
+      List.filter (function Neg, _, r -> not (Ranges.is_empty r) | _ -> true) result
+    in
     match result with
     | _ :: _ :: _ -> List.filter (function Pos, Root, _ -> false | _ -> true) result
     | _ -> result
