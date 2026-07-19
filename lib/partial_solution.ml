@@ -11,7 +11,9 @@ module Make (N : Types.NAME) (V : Types.VERSION) = struct
   (* One assignment touching a name, with the cumulative constraint state for
      that name after applying it. *)
   type entry = {
+    index : int; (* global chronological sequence number *)
     level : decision_level;
+    assignment : assignment;
     state : bool * Ranges.t; (* (has_positive, range) after this assignment *)
     decided : bool; (* some assignment up to this one is a Decision *)
   }
@@ -23,9 +25,10 @@ module Make (N : Types.NAME) (V : Types.VERSION) = struct
     assignments : (assignment * decision_level) list; (* newest first *)
     by_name : entry list NameMap.t; (* newest first *)
     trail : (decision_level * N.t) list; (* newest first *)
-    root_selected : bool;
+    root : (int * decision_level) option;
     decided_names : NameSet.t;
     undecided_pos_names : NameSet.t;
+    next_index : int;
   }
 
   let empty =
@@ -33,9 +36,10 @@ module Make (N : Types.NAME) (V : Types.VERSION) = struct
       assignments = [];
       by_name = NameMap.empty;
       trail = [];
-      root_selected = false;
+      root = None;
       decided_names = NameSet.empty;
       undecided_pos_names = NameSet.empty;
+      next_index = 0;
     }
 
   let initial_state = (false, Ranges.full)
@@ -48,9 +52,12 @@ module Make (N : Types.NAME) (V : Types.VERSION) = struct
     | RootDecision -> (has_pos, sr)
 
   let add ps lvl a =
-    let ps = { ps with assignments = (a, lvl) :: ps.assignments } in
+    let index = ps.next_index in
+    let ps =
+      { ps with assignments = (a, lvl) :: ps.assignments; next_index = index + 1 }
+    in
     match a with
-    | RootDecision -> { ps with root_selected = true }
+    | RootDecision -> { ps with root = Some (index, lvl) }
     | Derivation ((_, Root, _), _) -> ps
     | Decision (n, _) | Derivation ((_, Name n, _), _) ->
         let entries = Option.value (NameMap.find_opt n ps.by_name) ~default:[] in
@@ -61,7 +68,9 @@ module Make (N : Types.NAME) (V : Types.VERSION) = struct
         in
         let entry =
           {
+            index;
             level = lvl;
+            assignment = a;
             state = apply_assignment prev_state a;
             decided = (prev_decided || match a with Decision _ -> true | _ -> false);
           }
@@ -141,7 +150,7 @@ module Make (N : Types.NAME) (V : Types.VERSION) = struct
     | _ -> initial_state
 
   let is_decided ps n = NameSet.mem n ps.decided_names
-  let root_selected ps = ps.root_selected
+  let root_selected ps = ps.root <> None
   let undecided_pos_names ps = ps.undecided_pos_names
 
   let term_status ps (pol, name, vs) =
@@ -182,28 +191,95 @@ module Make (N : Types.NAME) (V : Types.VERSION) = struct
     in
     aux All_satisfied incomp.terms
 
-  let find_earliest_satisfier ps incomp =
-    let oldest_first = List.rev ps.assignments in
-    let rec aux acc = function
-      | [] -> None
-      | (a, lvl) :: rest ->
-          let acc' = add acc lvl a in
-          if incompatibility_status acc' incomp = All_satisfied then Some ((a, lvl), acc)
-          else aux acc' rest
-    in
-    aux empty oldest_first
+  (* Term satisfaction is monotone: constraint states only narrow as
+     assignments accumulate, so once a term is satisfied it stays satisfied.
+     An incompatibility thus becomes All_satisfied exactly when its last term
+     does, letting us search per term instead of replaying all assignments. *)
+  let state_satisfies (pol, _, vs) (has_pos, sr) =
+    match pol with
+    | Pos -> has_pos && Ranges.subset_of sr vs
+    | Neg -> Ranges.is_disjoint sr vs
 
-  let find_previous_satisfier_level ps_before (sat_a, sat_lvl) incomp =
-    let oldest_first = List.rev ps_before.assignments in
-    let rec aux acc = function
-      | [] -> None
-      | (a, lvl) :: rest ->
-          let acc' = add acc lvl a in
-          let with_sat = add acc' sat_lvl sat_a in
-          if incompatibility_status with_sat incomp = All_satisfied then Some lvl
-          else aux acc' rest
+  let entries_for ps n =
+    Option.value (NameMap.find_opt n ps.by_name) ~default:[]
+
+  (* Earliest chronological point at which [term] becomes satisfied:
+     (index, level, satisfying assignment), with index -1 when no assignment
+     is needed. None if it never becomes satisfied. *)
+  let term_satisfaction ps ((pol, name, _) as term) =
+    match name with
+    | Root -> (
+        match (ps.root, pol) with
+        | Some (index, level), Pos -> Some (index, level, RootDecision)
+        | Some _, Neg -> None
+        | None, Pos -> None
+        | None, Neg -> Some (-1, 0, RootDecision))
+    | Name n ->
+        if state_satisfies term initial_state then Some (-1, 0, RootDecision)
+        else
+          List.find_map
+            (fun e ->
+              if state_satisfies term e.state then Some (e.index, e.level, e.assignment)
+              else None)
+            (List.rev (entries_for ps n))
+
+  let find_satisfier ps incomp =
+    let rec satisfactions acc = function
+      | [] -> Some (List.rev acc)
+      | t :: ts -> (
+          match term_satisfaction ps t with
+          | None -> None
+          | Some s -> satisfactions ((t, s) :: acc) ts)
     in
-    match aux empty oldest_first with Some lvl -> lvl | None -> 0
+    match satisfactions [] incomp.terms with
+    | None | Some [] -> None
+    | Some (first :: rest) ->
+        let sat_term, (sat_index, sat_level, sat_assignment) =
+          List.fold_left
+            (fun ((_, (best_index, _, _)) as best) ((_, (index, _, _)) as cur) ->
+              if index > best_index then cur else best)
+            first rest
+        in
+        if sat_index < 0 then
+          (* Degenerate: satisfied with no assignments at all; mirror the
+             replay-based behavior of reporting the oldest assignment. *)
+          match List.rev ps.assignments with
+          | [] -> None
+          | (a, lvl) :: _ -> Some ((a, lvl), lvl)
+        else
+          (* The previous satisfier: the latest point at which every term
+             except the satisfier's own contribution is satisfied, i.e. the
+             level [incomp] would still be satisfied at were the satisfier
+             the only assignment above it. *)
+          let others_prev =
+            List.fold_left
+              (fun (best_index, best_level) (t, (index, level, _)) ->
+                if t == sat_term || index <= best_index then (best_index, best_level)
+                else (index, level))
+              (-1, 0) (first :: rest)
+          in
+          let own_prev =
+            match sat_term with
+            | _, Root, _ -> (-1, 0)
+            | _, Name n, _ ->
+                let satisfied_with s =
+                  state_satisfies sat_term (apply_assignment s sat_assignment)
+                in
+                if satisfied_with initial_state then (-1, 0)
+                else
+                  let rec walk = function
+                    | [] -> (-1, 0)
+                    | e :: _ when e.index >= sat_index -> (-1, 0)
+                    | e :: rest ->
+                        if satisfied_with e.state then (e.index, e.level) else walk rest
+                  in
+                  walk (List.rev (entries_for ps n))
+          in
+          let prev_index, prev_level =
+            if fst own_prev > fst others_prev then own_prev else others_prev
+          in
+          let previous_level = if prev_index >= 0 then prev_level else 0 in
+          Some ((sat_assignment, sat_level), previous_level)
 
   let pp_assignment fmt = function
     | Decision package -> Format.fprintf fmt "Decision %a" pp_package package
