@@ -9,7 +9,8 @@ end
 
 module Solver = Pubgrub.Make (S) (S)
 
-let v i = string_of_int i
+(* Zero-padded so lexicographic comparison agrees with numeric order. *)
+let v i = Printf.sprintf "%03d" i
 
 let time f =
   let t0 = Unix.gettimeofday () in
@@ -32,7 +33,7 @@ let deep_chain n =
     List.init n (fun i ->
         (("A" ^ v i, v 0), ("A" ^ v (i + 1), Solver.Ranges.singleton (v 0))))
   in
-  let query = [ ("A0", Solver.Ranges.singleton (v 0)) ] in
+  let query = [ ("A" ^ v 0, Solver.Ranges.singleton (v 0)) ] in
   (make_solver repo deps, query)
 
 let wide_fan n =
@@ -53,7 +54,7 @@ let conflict_heavy n m =
             (("C" ^ v i, v j), ("C" ^ v (i + 1), Solver.Ranges.of_list allowed))))
     |> List.flatten
   in
-  let query = [ ("C0", Solver.Ranges.of_list (List.init m (fun j -> v j))) ] in
+  let query = [ ("C" ^ v 0, Solver.Ranges.of_list (List.init m (fun j -> v j))) ] in
   (make_solver repo deps, query)
 
 let diamond n m =
