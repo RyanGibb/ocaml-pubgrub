@@ -16,8 +16,10 @@ module Make (N : Types.NAME) (V : Types.VERSION) : sig
   val add : t -> decision_level -> assignment -> t
   (** [add ps lvl a]: push [a] at decision level [lvl] onto [ps]. *)
 
-  val backtrack : t -> decision_level -> t
-  (** [backtrack ps level]: drop every assignment whose decision level exceeds [level]. *)
+  val backtrack : t -> decision_level -> t * N.t list
+  (** [backtrack ps level]: drop every assignment whose decision level exceeds [level].
+      Also returns the names whose constraints changed; all other names are
+      unaffected. *)
 
   val assignments : t -> (assignment * decision_level) list
   (** The assignments, newest first. *)
