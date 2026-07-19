@@ -36,17 +36,12 @@ module Make (N : Types.NAME) (V : Types.VERSION) : sig
   val term_status : t -> term -> term_status
   val incompatibility_status : t -> incompatibility -> incomp_status
 
-  val find_earliest_satisfier :
-    t -> incompatibility -> ((assignment * decision_level) * t) option
-  (** Find the earliest assignment in [ps] (oldest-first) whose inclusion first makes
-      [incomp] All_satisfied. Returns the satisfier and the partial solution as it was
-      BEFORE the satisfier was added. *)
-
-  val find_previous_satisfier_level :
-    t -> assignment * decision_level -> incompatibility -> decision_level
-  (** [find_previous_satisfier_level ps_before satisfier incomp]: the decision level at
-      which (some prefix of [ps_before] + [satisfier]) first becomes All_satisfied.
-      Returns 0 if no prefix helps. *)
+  val find_satisfier :
+    t -> incompatibility -> ((assignment * decision_level) * decision_level) option
+  (** The earliest assignment whose inclusion first makes [incomp] All_satisfied,
+      together with the previous satisfier level: the decision level at which some
+      prefix of the earlier assignments plus the satisfier first satisfies [incomp]
+      (0 if the satisfier needs no prefix). [None] if [incomp] is not satisfied. *)
 
   val pp_assignment : Format.formatter -> assignment -> unit
   val pp_assignments : Format.formatter -> (assignment * decision_level) list -> unit
