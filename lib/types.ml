@@ -100,7 +100,9 @@ module Make (N : NAME) (V : VERSION) = struct
     | Pos, Pos -> Ranges.subset_of sr tr
     | Neg, Neg -> Ranges.subset_of tr sr
     | Pos, Neg -> Ranges.is_disjoint sr tr
-    | Neg, Pos -> Ranges.subset_of (Ranges.complement sr) tr
+    (* a negative term never implies selection, so it cannot satisfy a
+       positive term -- it only narrows it (partial satisfaction) *)
+    | Neg, Pos -> false
 
   let term_not_difference (sp, sn, sr) (tp, _, tr) =
     match (sp, tp) with

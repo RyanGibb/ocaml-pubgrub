@@ -577,3 +577,125 @@ let%expect_test "unsatisfiable root dependency - empty range" =
     conflict resolution on: (terms: {Root *}, cause: dependency root -> foo ∅)
     root -> foo ∅
     |}]
+
+(* [opt] is only required by foo 2, and both its versions dead-end. Ruling out
+   opt 2 derives "not opt [2, +∞)", which then satisfies "opt (-∞, 2)" only
+   partially; generalising opt away loses the foo 1 solution. *)
+let%expect_test "conflict - negative satisfier of a positive term" =
+  solve
+    [
+      ("foo", "1");
+      ("foo", "2");
+      ("opt", "1");
+      ("opt", "2");
+      ("mid", "1");
+      ("bar", "1");
+      ("bar", "2");
+      ("baz", "1");
+      ("baz", "2");
+    ]
+    [
+      (("foo", "2"), ("opt", [ "1"; "2" ]));
+      (("opt", "2"), ("bar", [ "1" ]));
+      (("opt", "1"), ("mid", [ "1" ]));
+      (("mid", "1"), ("baz", [ "2" ]));
+    ]
+    [ ("foo", [ "1"; "2" ]); ("baz", [ "1" ]); ("bar", [ "2" ]) ];
+  [%expect
+    {|
+    initial incompatibilities
+    (terms: {Root *, not foo 1 ∪ 2}, cause: dependency root -> foo 1 ∪ 2)
+    (terms: {Root *, not baz 1}, cause: dependency root -> baz 1)
+    (terms: {Root *, not bar 2}, cause: dependency root -> bar 2)
+    unit propagation on: Root
+    new assignment on level 0: Derivation bar 2 due to incompatibility (terms: {Root *, not bar 2}, cause: dependency root -> bar 2)
+    new assignment on level 0: Derivation baz 1 due to incompatibility (terms: {Root *, not baz 1}, cause: dependency root -> baz 1)
+    new assignment on level 0: Derivation foo 1 ∪ 2 due to incompatibility (terms: {Root *, not foo 1 ∪ 2}, cause: dependency root -> foo 1 ∪ 2)
+    unit propagation on: foo
+    unit propagation on: baz
+    unit propagation on: bar
+    deciding on bar: 2
+    trying version 2
+    assignment on level 1: Decision bar 2
+    unit propagation on: bar
+    deciding on baz: 1
+    trying version 1
+    assignment on level 2: Decision baz 1
+    unit propagation on: baz
+    deciding on foo: 1 ∪ 2
+    trying version 2
+    dependency incompatibilities
+    (terms: {foo [2, +∞), not opt 1 ∪ 2}, cause: dependency foo 2 -> opt 1 ∪ 2)
+    assignment on level 3: Decision foo 2
+    unit propagation on: foo
+    new assignment on level 3: Derivation opt 1 ∪ 2 due to incompatibility (terms: {foo [2, +∞), not opt 1 ∪ 2}, cause: dependency foo 2 -> opt 1 ∪ 2)
+    unit propagation on: opt
+    deciding on opt: 1 ∪ 2
+    trying version 2
+    dependency incompatibilities
+    (terms: {opt [2, +∞), not bar 1}, cause: dependency opt 2 -> bar 1)
+    not adding decision due to conflict
+    unit propagation on: opt
+    new assignment on level 3: Derivation not opt [2, +∞) due to incompatibility (terms: {opt [2, +∞), not bar 1}, cause: dependency opt 2 -> bar 1)
+    unit propagation on: opt
+    deciding on opt: 1
+    trying version 1
+    dependency incompatibilities
+    (terms: {opt (-∞, 2), not mid 1}, cause: dependency opt 1 -> mid 1)
+    assignment on level 4: Decision opt 1
+    unit propagation on: opt
+    new assignment on level 4: Derivation mid 1 due to incompatibility (terms: {opt (-∞, 2), not mid 1}, cause: dependency opt 1 -> mid 1)
+    unit propagation on: mid
+    deciding on mid: 1
+    trying version 1
+    dependency incompatibilities
+    (terms: {mid *, not baz 2}, cause: dependency mid 1 -> baz 2)
+    not adding decision due to conflict
+    unit propagation on: mid
+    conflict resolution on: (terms: {mid *, not baz 2}, cause: dependency mid 1 -> baz 2)
+    satisfiying assignment on level 4: Derivation mid 1 due to incompatibility (terms: {opt (-∞, 2), not mid 1}, cause: dependency opt 1 -> mid 1)
+    backtracking to level 0
+    solution: (0: Derivation foo 1 ∪ 2 due to incompatibility (terms: {Root *, not foo 1 ∪ 2}, cause: dependency root -> foo 1 ∪ 2)), (0: Derivation baz 1 due to incompatibility (terms: {Root *, not baz 1}, cause: dependency root -> baz 1)), (0: Derivation bar 2 due to incompatibility (terms: {Root *, not bar 2}, cause: dependency root -> bar 2)), (0: Decision root)
+    new assignment on level 0: Derivation not mid * due to incompatibility (terms: {mid *, not baz 2}, cause: dependency mid 1 -> baz 2)
+    unit propagation on: mid
+    deciding on bar: 2
+    trying version 2
+    assignment on level 1: Decision bar 2
+    unit propagation on: bar
+    deciding on baz: 1
+    trying version 1
+    assignment on level 2: Decision baz 1
+    unit propagation on: baz
+    deciding on foo: 1 ∪ 2
+    trying version 2
+    assignment on level 3: Decision foo 2
+    unit propagation on: foo
+    new assignment on level 3: Derivation opt 1 ∪ 2 due to incompatibility (terms: {foo [2, +∞), not opt 1 ∪ 2}, cause: dependency foo 2 -> opt 1 ∪ 2)
+    unit propagation on: opt
+    new assignment on level 3: Derivation not opt (-∞, 2) due to incompatibility (terms: {opt (-∞, 2), not mid 1}, cause: dependency opt 1 -> mid 1)
+    conflict resolution on: (terms: {opt [2, +∞), not bar 1}, cause: dependency opt 2 -> bar 1)
+    satisfiying assignment on level 3: Derivation not opt (-∞, 2) due to incompatibility (terms: {opt (-∞, 2), not mid 1}, cause: dependency opt 1 -> mid 1)
+    prior cause (terms: {not bar 1, not mid 1, opt *}, cause: ((terms: {opt [2, +∞), not bar 1}, cause: dependency opt 2 -> bar 1) and (terms: {opt (-∞, 2), not mid 1}, cause: dependency opt 1 -> mid 1)))
+    conflict resolution on: (terms: {not bar 1, not mid 1, opt *}, cause: ((terms: {opt [2, +∞), not bar 1}, cause: dependency opt 2 -> bar 1) and (terms: {opt (-∞, 2), not mid 1}, cause: dependency opt 1 -> mid 1)))
+    satisfiying assignment on level 3: Derivation opt 1 ∪ 2 due to incompatibility (terms: {foo [2, +∞), not opt 1 ∪ 2}, cause: dependency foo 2 -> opt 1 ∪ 2)
+    backtracking to level 0
+    solution: (0: Derivation not mid * due to incompatibility (terms: {mid *, not baz 2}, cause: dependency mid 1 -> baz 2)), (0: Derivation foo 1 ∪ 2 due to incompatibility (terms: {Root *, not foo 1 ∪ 2}, cause: dependency root -> foo 1 ∪ 2)), (0: Derivation baz 1 due to incompatibility (terms: {Root *, not baz 1}, cause: dependency root -> baz 1)), (0: Derivation bar 2 due to incompatibility (terms: {Root *, not bar 2}, cause: dependency root -> bar 2)), (0: Decision root)
+    new incompatibility (terms: {not bar 1, not mid 1, opt *}, cause: ((terms: {opt [2, +∞), not bar 1}, cause: dependency opt 2 -> bar 1) and (terms: {opt (-∞, 2), not mid 1}, cause: dependency opt 1 -> mid 1)))
+    new assignment on level 0: Derivation not opt * due to incompatibility (terms: {not bar 1, not mid 1, opt *}, cause: ((terms: {opt [2, +∞), not bar 1}, cause: dependency opt 2 -> bar 1) and (terms: {opt (-∞, 2), not mid 1}, cause: dependency opt 1 -> mid 1)))
+    unit propagation on: opt
+    new assignment on level 0: Derivation not foo [2, +∞) due to incompatibility (terms: {foo [2, +∞), not opt 1 ∪ 2}, cause: dependency foo 2 -> opt 1 ∪ 2)
+    unit propagation on: foo
+    deciding on bar: 2
+    trying version 2
+    assignment on level 1: Decision bar 2
+    unit propagation on: bar
+    deciding on baz: 1
+    trying version 1
+    assignment on level 2: Decision baz 1
+    unit propagation on: baz
+    deciding on foo: 1
+    trying version 1
+    assignment on level 3: Decision foo 1
+    unit propagation on: foo
+    foo 1, baz 1, bar 2
+    |}]
