@@ -162,6 +162,10 @@ module Make (N : NAME) (V : VERSION) = struct
             incompat_propagation ~versions state (name :: changed) incomps
         | _ -> incompat_propagation ~versions state changed incomps)
 
+  (* a negative term over the empty range can never be violated: drop it *)
+  let drop_tautologies =
+    List.filter (function Neg, _, r -> not (Ranges.is_empty r) | _ -> true)
+
   let dependency_incomps ~versions ~dependencies n version =
     let all_versions = versions n in
     List.map
@@ -173,7 +177,9 @@ module Make (N : NAME) (V : VERSION) = struct
         in
         let depender_range = Ranges.contiguous version all_versions has_dep in
         {
-          terms = [ (Pos, Name n, depender_range); (Neg, Name dep_name, dep_range) ];
+          terms =
+            drop_tautologies
+              [ (Pos, Name n, depender_range); (Neg, Name dep_name, dep_range) ];
           cause = Dependency ((n, version), (Name dep_name, dep_range));
         })
       (dependencies n version)
@@ -238,7 +244,7 @@ module Make (N : NAME) (V : VERSION) = struct
     List.map
       (fun ((dep_name, dep_range) as dep) ->
         {
-          terms = [ (Pos, Root, Ranges.full); (Neg, dep_name, dep_range) ];
+          terms = drop_tautologies [ (Pos, Root, Ranges.full); (Neg, dep_name, dep_range) ];
           cause = RootDependency dep;
         })
       query
