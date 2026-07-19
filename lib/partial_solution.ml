@@ -133,14 +133,15 @@ module Make (N : Types.NAME) (V : Types.VERSION) = struct
         touched
         (ps.by_name, ps.decided_names, ps.undecided_pos_names)
     in
-    {
-      ps with
-      assignments = drop_assignments ps.assignments;
-      by_name;
-      trail;
-      decided_names;
-      undecided_pos_names;
-    }
+    ( {
+        ps with
+        assignments = drop_assignments ps.assignments;
+        by_name;
+        trail;
+        decided_names;
+        undecided_pos_names;
+      },
+      NameSet.elements touched )
 
   let assignments ps = ps.assignments
 

@@ -58,15 +58,18 @@ module Make (N : NAME) (V : VERSION) = struct
     in
     { state with candidates }
 
-  (* Rebuild the priority queue from scratch from the current partial solution.
-     Used after backtrack. *)
-  let rebuild_candidates ~versions state =
-    let state = { state with candidates = PQ.empty } in
-    PS.NameSet.fold
-      (fun n s ->
-        { s with candidates = PQ.insert s.candidates n (count_for ~versions s n) })
-      (PS.undecided_pos_names state.partial_solution)
-      state
+  (* Refresh the priority queue for the names whose constraints a backtrack
+     changed; all other names keep their counts. *)
+  let refresh_candidates ~versions state touched =
+    List.fold_left
+      (fun s n ->
+        let candidates =
+          if PS.NameSet.mem n (PS.undecided_pos_names s.partial_solution) then
+            PQ.update s.candidates n (count_for ~versions s n)
+          else PQ.remove s.candidates n
+        in
+        { s with candidates })
+      state touched
 
   let rec conflict_resolution ~versions state original_incomp incomp :
       (state * incompatibility * term, incompatibility) Result.t =
@@ -87,7 +90,7 @@ module Make (N : NAME) (V : VERSION) = struct
             match (satisfier, satisfier_decision_level != previous_satisfier_level) with
             | PS.Decision _, _ | PS.RootDecision, _ | _, true ->
                 debug_printf "backtracking to level %d\n" previous_satisfier_level;
-                let partial_solution =
+                let partial_solution, touched =
                   PS.backtrack state.partial_solution previous_satisfier_level
                 in
                 debug_printf "solution: %a\n" PS.pp_assignments
@@ -99,7 +102,7 @@ module Make (N : NAME) (V : VERSION) = struct
                     decision_level = previous_satisfier_level;
                   }
                 in
-                let state = rebuild_candidates ~versions state in
+                let state = refresh_candidates ~versions state touched in
                 let state =
                   if incomp != original_incomp then (
                     debug_printf "new incompatibility %a\n" pp_incompatibility incomp;
