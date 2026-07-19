@@ -75,19 +75,14 @@ module Make (N : NAME) (V : VERSION) = struct
     | [] -> Error incomp
     | [ (Pos, Root, _) ] -> Error incomp
     | _ -> (
-        match PS.find_earliest_satisfier state.partial_solution incomp with
+        match PS.find_satisfier state.partial_solution incomp with
         | None -> failwith "Incompatibility not satisfied"
-        | Some ((satisfier, satisfier_decision_level), ps_before) -> (
+        | Some ((satisfier, satisfier_decision_level), previous_satisfier_level) -> (
             debug_printf "satisfiying assignment on level %d: %a\n"
               satisfier_decision_level PS.pp_assignment satisfier;
             let term =
               let name = PS.assignment_name satisfier in
               List.find (fun t -> compare_name (term_name t) name = 0) incomp.terms
-            in
-            let previous_satisfier_level =
-              PS.find_previous_satisfier_level ps_before
-                (satisfier, satisfier_decision_level)
-                incomp
             in
             match (satisfier, satisfier_decision_level != previous_satisfier_level) with
             | PS.Decision _, _ | PS.RootDecision, _ | _, true ->
