@@ -8,78 +8,138 @@ module Make (N : Types.NAME) (V : Types.VERSION) = struct
     | RootDecision
     | Derivation of term * incompatibility
 
+  (* One assignment touching a name, with the cumulative constraint state for
+     that name after applying it. *)
+  type entry = {
+    level : decision_level;
+    state : bool * Ranges.t; (* (has_positive, range) after this assignment *)
+    decided : bool; (* some assignment up to this one is a Decision *)
+  }
+
+  (* Assignment levels are non-decreasing in chronological order (backtracking
+     truncates to a prefix and resumes at the target level), so dropping
+     assignments above a level always removes a newest-first prefix. *)
   type t = {
-    assignments : (assignment * decision_level) list;
-    name_ranges : (bool * Ranges.t) NameMap.t;
+    assignments : (assignment * decision_level) list; (* newest first *)
+    by_name : entry list NameMap.t; (* newest first *)
+    trail : (decision_level * N.t) list; (* newest first *)
+    root_selected : bool;
     decided_names : NameSet.t;
     undecided_pos_names : NameSet.t;
-    root_selected : bool;
   }
 
   let empty =
     {
       assignments = [];
-      name_ranges = NameMap.empty;
+      by_name = NameMap.empty;
+      trail = [];
+      root_selected = false;
       decided_names = NameSet.empty;
       undecided_pos_names = NameSet.empty;
-      root_selected = false;
     }
 
-  let lookup_range n nr =
-    Option.value (NameMap.find_opt n nr) ~default:(false, Ranges.full)
+  let initial_state = (false, Ranges.full)
 
-  let update_name_ranges nr = function
-    | Decision (n, v) -> NameMap.add n (true, Ranges.singleton v) nr
-    | Derivation ((Pos, Name n, r), _) ->
-        let _, old_r = lookup_range n nr in
-        NameMap.add n (true, Ranges.intersection r old_r) nr
-    | Derivation ((Neg, Name n, r), _) ->
-        let old_pos, old_r = lookup_range n nr in
-        NameMap.add n (old_pos, Ranges.intersection (Ranges.complement r) old_r) nr
-    | _ -> nr
-
-  let update_decided_names ds = function Decision (n, _) -> NameSet.add n ds | _ -> ds
-
-  let update_undecided_pos_names ups ~decided = function
-    | Decision (n, _) -> NameSet.remove n ups
-    | Derivation ((Pos, Name n, _), _) ->
-        if NameSet.mem n decided then ups else NameSet.add n ups
-    | _ -> ups
-
-  let update_root_selected rs = function RootDecision -> true | _ -> rs
+  let apply_assignment (has_pos, sr) = function
+    | Decision (_, v) -> (true, Ranges.singleton v)
+    | Derivation ((Pos, _, r), _) -> (true, Ranges.intersection r sr)
+    | Derivation ((Neg, _, r), _) ->
+        (has_pos, Ranges.intersection (Ranges.complement r) sr)
+    | RootDecision -> (has_pos, sr)
 
   let add ps lvl a =
-    {
-      assignments = (a, lvl) :: ps.assignments;
-      name_ranges = update_name_ranges ps.name_ranges a;
-      decided_names = update_decided_names ps.decided_names a;
-      undecided_pos_names =
-        update_undecided_pos_names ps.undecided_pos_names ~decided:ps.decided_names a;
-      root_selected = update_root_selected ps.root_selected a;
-    }
+    let ps = { ps with assignments = (a, lvl) :: ps.assignments } in
+    match a with
+    | RootDecision -> { ps with root_selected = true }
+    | Derivation ((_, Root, _), _) -> ps
+    | Decision (n, _) | Derivation ((_, Name n, _), _) ->
+        let entries = Option.value (NameMap.find_opt n ps.by_name) ~default:[] in
+        let prev_state, prev_decided =
+          match entries with
+          | e :: _ -> (e.state, e.decided)
+          | [] -> (initial_state, false)
+        in
+        let entry =
+          {
+            level = lvl;
+            state = apply_assignment prev_state a;
+            decided = (prev_decided || match a with Decision _ -> true | _ -> false);
+          }
+        in
+        let decided_names =
+          match a with
+          | Decision _ -> NameSet.add n ps.decided_names
+          | _ -> ps.decided_names
+        in
+        let undecided_pos_names =
+          match a with
+          | Decision _ -> NameSet.remove n ps.undecided_pos_names
+          | Derivation ((Pos, _, _), _) ->
+              if NameSet.mem n ps.decided_names then ps.undecided_pos_names
+              else NameSet.add n ps.undecided_pos_names
+          | _ -> ps.undecided_pos_names
+        in
+        {
+          ps with
+          by_name = NameMap.add n (entry :: entries) ps.by_name;
+          trail = (lvl, n) :: ps.trail;
+          decided_names;
+          undecided_pos_names;
+        }
 
   let backtrack ps level =
-    let filtered = List.filter (fun (_, lvl) -> lvl <= level) ps.assignments in
-    let name_ranges, decided_names, undecided_pos_names, root_selected =
-      List.fold_left
-        (fun (nr, ds, ups, rs) (a, _) ->
-          ( update_name_ranges nr a,
-            update_decided_names ds a,
-            update_undecided_pos_names ups ~decided:ds a,
-            update_root_selected rs a ))
-        (NameMap.empty, NameSet.empty, NameSet.empty, false)
-        (List.rev filtered)
+    let rec drop_assignments = function
+      | (_, lvl) :: rest when lvl > level -> drop_assignments rest
+      | assignments -> assignments
+    in
+    let rec split_trail touched = function
+      | (lvl, n) :: rest when lvl > level -> split_trail (NameSet.add n touched) rest
+      | trail -> (touched, trail)
+    in
+    let touched, trail = split_trail NameSet.empty ps.trail in
+    let by_name, decided_names, undecided_pos_names =
+      NameSet.fold
+        (fun n (by_name, decided, undecided) ->
+          let rec drop_entries = function
+            | e :: rest when e.level > level -> drop_entries rest
+            | entries -> entries
+          in
+          let entries =
+            drop_entries (Option.value (NameMap.find_opt n by_name) ~default:[])
+          in
+          match entries with
+          | [] ->
+              ( NameMap.remove n by_name,
+                NameSet.remove n decided,
+                NameSet.remove n undecided )
+          | e :: _ ->
+              let decided =
+                if e.decided then NameSet.add n decided else NameSet.remove n decided
+              in
+              let undecided =
+                if fst e.state && not e.decided then NameSet.add n undecided
+                else NameSet.remove n undecided
+              in
+              (NameMap.add n entries by_name, decided, undecided))
+        touched
+        (ps.by_name, ps.decided_names, ps.undecided_pos_names)
     in
     {
-      assignments = filtered;
-      name_ranges;
+      ps with
+      assignments = drop_assignments ps.assignments;
+      by_name;
+      trail;
       decided_names;
       undecided_pos_names;
-      root_selected;
     }
 
   let assignments ps = ps.assignments
-  let name_range ps n = lookup_range n ps.name_ranges
+
+  let name_range ps n =
+    match NameMap.find_opt n ps.by_name with
+    | Some (e :: _) -> e.state
+    | _ -> initial_state
+
   let is_decided ps n = NameSet.mem n ps.decided_names
   let root_selected ps = ps.root_selected
   let undecided_pos_names ps = ps.undecided_pos_names
