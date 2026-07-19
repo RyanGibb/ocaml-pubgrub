@@ -72,6 +72,37 @@ let diamond n m =
   let query = List.init n (fun i -> ("D" ^ v i, Solver.Ranges.singleton (v 0))) in
   (make_solver repo deps, query)
 
+(* Each pair (X i, Y i): X i 1 depends on Y i 1, which depends back on X i 0.
+   Choosing X i 1 (the newest) always dead-ends, forcing one conflict
+   resolution and backtrack per pair. *)
+let backtrack_chain n =
+  let repo =
+    List.init n (fun i -> [ ("X" ^ v i, v 0); ("X" ^ v i, v 1); ("Y" ^ v i, v 1) ])
+    |> List.flatten
+  in
+  let deps =
+    List.init n (fun i ->
+        [
+          (("X" ^ v i, v 1), ("Y" ^ v i, Solver.Ranges.singleton (v 1)));
+          (("Y" ^ v i, v 1), ("X" ^ v i, Solver.Ranges.singleton (v 0)));
+        ])
+    |> List.flatten
+  in
+  let query = List.init n (fun i -> ("X" ^ v i, Solver.Ranges.of_list [ v 0; v 1 ])) in
+  (make_solver repo deps, query)
+
+(* Chain A0 -> A1 -> ... -> An of exact version requirements, but the final
+   package only ships a version outside the required range, so solving fails
+   after propagating the whole chain. *)
+let unsat_chain n =
+  let repo = List.init (n + 1) (fun i -> ("A" ^ v i, v (if i = n then 1 else 0))) in
+  let deps =
+    List.init n (fun i ->
+        (("A" ^ v i, v 0), ("A" ^ v (i + 1), Solver.Ranges.singleton (v 0))))
+  in
+  let query = [ ("A" ^ v 0, Solver.Ranges.singleton (v 0)) ] in
+  (make_solver repo deps, query)
+
 (* Random graph with power-law popularity and geometric version/dep counts. *)
 let realistic n =
   let rng = Random.State.make [| 42 |] in
@@ -132,6 +163,8 @@ let run shape n reps =
     | "wide_fan" -> wide_fan n
     | "conflict_heavy" -> conflict_heavy n 5
     | "diamond" -> diamond n 20
+    | "backtrack_chain" -> backtrack_chain n
+    | "unsat_chain" -> unsat_chain n
     | "realistic" -> realistic n
     | _ -> failwith (Printf.sprintf "unknown shape: %s" shape)
   in
@@ -155,6 +188,8 @@ let all_shapes =
     ("wide_fan", 1000);
     ("conflict_heavy", 100);
     ("diamond", 200);
+    ("backtrack_chain", 200);
+    ("unsat_chain", 500);
     ("realistic", 1000);
   ]
 
@@ -169,7 +204,8 @@ let () =
     | _ ->
         Printf.eprintf "usage: bench <shape> <n> [reps] | bench all\n";
         Printf.eprintf
-          "shapes: deep_chain, wide_fan, conflict_heavy, diamond, realistic\n";
+          "shapes: deep_chain, wide_fan, conflict_heavy, diamond, backtrack_chain, \
+           unsat_chain, realistic\n";
         exit 1
   in
   if not ok then exit 1
