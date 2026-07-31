@@ -18,19 +18,21 @@ let pp_result fmt = function
         fmt resolution
   | Error incomp -> Solver.explain_incompatibility fmt incomp
 
-let solve repo deps query =
+let solve_ranges repo deps query =
   let repo_tbl = Hashtbl.create 16 in
   List.iter (fun (n, v) -> Hashtbl.add repo_tbl n v) repo;
   let dep_tbl = Hashtbl.create 16 in
-  List.iter
-    (fun ((n, v), (dn, dvs)) ->
-      Hashtbl.add dep_tbl (n, v) (dn, Solver.Ranges.of_list dvs))
-    deps;
+  List.iter (fun (pkg, dep) -> Hashtbl.add dep_tbl pkg dep) deps;
   let versions n = Hashtbl.find_all repo_tbl n in
   let dependencies n v = Hashtbl.find_all dep_tbl (n, v) in
-  let query = List.map (fun (n, vs) -> (n, Solver.Ranges.of_list vs)) query in
   let result = Solver.solve ~versions ~dependencies query in
   Format.printf "%a\n" pp_result result
+
+(* Ranges given as version lists, which is all most tests need. *)
+let solve repo deps query =
+  solve_ranges repo
+    (List.map (fun (pkg, (dn, dvs)) -> (pkg, (dn, Solver.Ranges.of_list dvs))) deps)
+    (List.map (fun (n, vs) -> (n, Solver.Ranges.of_list vs)) query)
 
 let%expect_test "example - diamond dependency" =
   solve
@@ -698,4 +700,50 @@ let%expect_test "conflict - negative satisfier of a positive term" =
     assignment on level 3: Decision foo 1
     unit propagation on: foo
     foo 1, baz 1, bar 2
+    |}]
+
+(* Reading {Root *, not foo *} as contradicted before anything is assigned
+   leaves nothing to propagate, and solving returns the empty solution. *)
+let%expect_test "unconstrained root dependency" =
+  solve_ranges [ ("foo", "1"); ("foo", "2") ] [] [ ("foo", Solver.Ranges.full) ];
+  [%expect
+    {|
+    initial incompatibilities
+    (terms: {Root *, not foo *}, cause: dependency root -> foo *)
+    unit propagation on: Root
+    new assignment on level 0: Derivation foo * due to incompatibility (terms: {Root *, not foo *}, cause: dependency root -> foo *)
+    unit propagation on: foo
+    deciding on foo: *
+    trying version 2
+    assignment on level 1: Decision foo 2
+    unit propagation on: foo
+    foo 2
+    |}]
+
+(* Same defect one level down: bar is still required, whatever its version. *)
+let%expect_test "unconstrained dependency" =
+  solve_ranges
+    [ ("foo", "1"); ("bar", "1"); ("bar", "2") ]
+    [ (("foo", "1"), ("bar", Solver.Ranges.full)) ]
+    [ ("foo", Solver.Ranges.of_list [ "1" ]) ];
+  [%expect
+    {|
+    initial incompatibilities
+    (terms: {Root *, not foo 1}, cause: dependency root -> foo 1)
+    unit propagation on: Root
+    new assignment on level 0: Derivation foo 1 due to incompatibility (terms: {Root *, not foo 1}, cause: dependency root -> foo 1)
+    unit propagation on: foo
+    deciding on foo: 1
+    trying version 1
+    dependency incompatibilities
+    (terms: {foo *, not bar *}, cause: dependency foo 1 -> bar *)
+    assignment on level 1: Decision foo 1
+    unit propagation on: foo
+    new assignment on level 1: Derivation bar * due to incompatibility (terms: {foo *, not bar *}, cause: dependency foo 1 -> bar *)
+    unit propagation on: bar
+    deciding on bar: *
+    trying version 2
+    assignment on level 2: Decision bar 2
+    unit propagation on: bar
+    bar 2, foo 1
     |}]
