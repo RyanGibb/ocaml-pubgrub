@@ -166,10 +166,8 @@ module Make (N : Types.NAME) (V : Types.VERSION) = struct
         let has_positive, sr = name_range ps n in
         match (has_positive, pol) with
         | false, Pos -> Contradicted
-        | false, Neg ->
-            if Ranges.is_disjoint sr vs then Satisfied
-            else if Ranges.subset_of sr vs then Contradicted
-            else Undetermined
+        (* Nothing forces an unselected name into [vs]. *)
+        | false, Neg -> if Ranges.is_disjoint sr vs then Satisfied else Undetermined
         | true, _ ->
             if Ranges.subset_of sr vs then
               match pol with Pos -> Satisfied | Neg -> Contradicted
