@@ -1,18 +1,18 @@
-module type NAME = sig
+module type NameType = sig
   type t
 
   val compare : t -> t -> int
   val pp : Format.formatter -> t -> unit
 end
 
-module type VERSION = sig
+module type VersionType = sig
   type t
 
   val compare : t -> t -> int
   val pp : Format.formatter -> t -> unit
 end
 
-module Make (N : NAME) (V : VERSION) = struct
+module Make (N : NameType) (V : VersionType) = struct
   module Ranges = Ranges.Make (V)
 
   type name = Root | Name of N.t

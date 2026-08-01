@@ -1,6 +1,6 @@
 (** The partial solution: the assignments the solver has accumulated so far. *)
 
-module Make (N : Types.NAME) (V : Types.VERSION) : sig
+module Make (N : Types.NameType) (V : Types.VersionType) : sig
   include module type of Types.Make (N) (V)
   module NameSet : Set.S with type elt = N.t
 

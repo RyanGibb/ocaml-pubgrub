@@ -1,7 +1,7 @@
 (** Min priority queue keyed on a name with an integer priority. Ties broken by the name's
     own [compare]. All operations are O(log n). *)
 
-module Make (N : Types.NAME) : sig
+module Make (N : Types.NameType) : sig
   type t
 
   val empty : t

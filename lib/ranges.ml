@@ -1,11 +1,11 @@
-module type ORDERED = sig
+module type OrderedType = sig
   type t
 
   val compare : t -> t -> int
   val pp : Format.formatter -> t -> unit
 end
 
-module Make (V : ORDERED) = struct
+module Make (V : OrderedType) = struct
   type bound = Unbounded | Included of V.t | Excluded of V.t
   type segment = bound * bound
 

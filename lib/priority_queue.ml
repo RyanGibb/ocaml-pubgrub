@@ -1,4 +1,4 @@
-module Make (N : Types.NAME) = struct
+module Make (N : Types.NameType) = struct
   module NMap = Map.Make (N)
 
   module Entry = struct
