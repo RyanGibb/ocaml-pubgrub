@@ -1,11 +1,11 @@
-module type NAME = sig
+module type NameType = sig
   type t
 
   val compare : t -> t -> int
   val pp : Format.formatter -> t -> unit
 end
 
-module type VERSION = sig
+module type VersionType = sig
   type t
 
   val compare : t -> t -> int
@@ -14,7 +14,7 @@ end
 
 val set_debug : bool -> unit
 
-module Make (N : NAME) (V : VERSION) : sig
+module Make (N : NameType) (V : VersionType) : sig
   module Ranges : module type of Ranges.Make (V)
 
   type incompatibility

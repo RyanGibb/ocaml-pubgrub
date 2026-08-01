@@ -1,7 +1,7 @@
 let ( let* ) = Option.bind
 
-module type NAME = Types.NAME
-module type VERSION = Types.VERSION
+module type NameType = Types.NameType
+module type VersionType = Types.VersionType
 
 let debug_enabled = ref false
 
@@ -14,7 +14,7 @@ let debug_printf fmt =
 
 let set_debug enabled = debug_enabled := enabled
 
-module Make (N : NAME) (V : VERSION) = struct
+module Make (N : NameType) (V : VersionType) = struct
   include Types.Make (N) (V)
   module PS = Partial_solution.Make (N) (V)
   module Incomp = Incompatibilities.Make (N) (V)

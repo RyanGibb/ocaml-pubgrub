@@ -1,6 +1,6 @@
 (** Pool of incompatibilities accumulated during version solving.*)
 
-module Make (N : Types.NAME) (V : Types.VERSION) : sig
+module Make (N : Types.NameType) (V : Types.VersionType) : sig
   include module type of Types.Make (N) (V)
 
   type t

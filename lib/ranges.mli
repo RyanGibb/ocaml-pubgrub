@@ -1,11 +1,11 @@
-module type ORDERED = sig
+module type OrderedType = sig
   type t
 
   val compare : t -> t -> int
   val pp : Format.formatter -> t -> unit
 end
 
-module Make (V : ORDERED) : sig
+module Make (V : OrderedType) : sig
   type t
 
   val empty : t

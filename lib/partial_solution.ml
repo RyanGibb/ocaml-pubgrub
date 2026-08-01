@@ -1,4 +1,4 @@
-module Make (N : Types.NAME) (V : Types.VERSION) = struct
+module Make (N : Types.NameType) (V : Types.VersionType) = struct
   include Types.Make (N) (V)
   module NameMap = Map.Make (N)
   module NameSet = Set.Make (N)
