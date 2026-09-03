@@ -33,18 +33,18 @@ module Make (N : NameType) (V : VersionType) = struct
   let add_incomps state incomps = List.fold_left add_incomp state incomps
 
   (* Count of available versions for [n] in the current partial solution. *)
-  let count_for ~versions state n =
+  let count_for ~vers state n =
     let _, sr = PS.name_range state.partial_solution n in
-    List.length (List.filter (fun v -> Ranges.contains v sr) (versions n))
+    List.length (List.filter (fun v -> Ranges.contains v sr) (vers n))
 
   (* Push an assignment onto the partial solution at the current decision
      level and refresh the candidates priority queue. *)
-  let add_assignment ~versions state assignment =
+  let add_assignment ~vers state assignment =
     let partial_solution =
       PS.add state.partial_solution state.decision_level assignment
     in
     let state = { state with partial_solution } in
-    let set_count n = PQ.update state.candidates n (count_for ~versions state n) in
+    let set_count n = PQ.update state.candidates n (count_for ~vers state n) in
     let candidates =
       match assignment with
       | PS.Decision (n, _) -> PQ.remove state.candidates n
@@ -60,18 +60,18 @@ module Make (N : NameType) (V : VersionType) = struct
 
   (* Refresh the priority queue for the names whose constraints a backtrack
      changed; all other names keep their counts. *)
-  let refresh_candidates ~versions state touched =
+  let refresh_candidates ~vers state touched =
     List.fold_left
       (fun s n ->
         let candidates =
           if PS.NameSet.mem n (PS.undecided_pos_names s.partial_solution) then
-            PQ.update s.candidates n (count_for ~versions s n)
+            PQ.update s.candidates n (count_for ~vers s n)
           else PQ.remove s.candidates n
         in
         { s with candidates })
       state touched
 
-  let rec conflict_resolution ~versions state original_incomp incomp :
+  let rec conflict_resolution ~vers state original_incomp incomp :
       (state * incompatibility * term, incompatibility) Result.t =
     debug_printf "conflict resolution on: %a\n" pp_incompatibility incomp;
     match incomp.terms with
@@ -102,7 +102,7 @@ module Make (N : NameType) (V : VersionType) = struct
                     decision_level = previous_satisfier_level;
                   }
                 in
-                let state = refresh_candidates ~versions state touched in
+                let state = refresh_candidates ~vers state touched in
                 let state =
                   if incomp != original_incomp then (
                     debug_printf "new incompatibility %a\n" pp_incompatibility incomp;
@@ -127,51 +127,51 @@ module Make (N : NameType) (V : VersionType) = struct
                   }
                 in
                 debug_printf "prior cause %a\n" pp_incompatibility prior_cause;
-                conflict_resolution ~versions state original_incomp prior_cause))
+                conflict_resolution ~vers state original_incomp prior_cause))
 
-  let rec unit_propagation ~versions state changed : (state, incompatibility) Result.t =
+  let rec unit_propagation ~vers state changed : (state, incompatibility) Result.t =
     match changed with
     | [] -> Ok state
     | name :: changed ->
         debug_printf "unit propagation on: %a\n" pp_name name;
         let incomps = Incomp.find_for_name name state.incomps in
-        incompat_propagation ~versions state changed incomps
+        incompat_propagation ~vers state changed incomps
 
-  and incompat_propagation ~versions state changed = function
-    | [] -> unit_propagation ~versions state changed
+  and incompat_propagation ~vers state changed = function
+    | [] -> unit_propagation ~vers state changed
     | incomp :: incomps -> (
         match PS.incompatibility_status state.partial_solution incomp with
         | All_satisfied -> (
-            match conflict_resolution ~versions state incomp incomp with
+            match conflict_resolution ~vers state incomp incomp with
             | Ok (state, incomp, term) ->
                 let assignment = PS.Derivation (negate_term term, incomp) in
                 let _, name, _ = term in
                 debug_printf "new assignment on level %d: %a\n" state.decision_level
                   PS.pp_assignment assignment;
-                let state = add_assignment ~versions state assignment in
-                unit_propagation ~versions state [ name ]
+                let state = add_assignment ~vers state assignment in
+                unit_propagation ~vers state [ name ]
             | Error incomp -> Error incomp)
         | Almost_satisfied term ->
             let assignment = PS.Derivation (negate_term term, incomp) in
             debug_printf "new assignment on level %d: %a\n" state.decision_level
               PS.pp_assignment assignment;
-            let state = add_assignment ~versions state assignment in
+            let state = add_assignment ~vers state assignment in
             let _, name, _ = term in
-            incompat_propagation ~versions state (name :: changed) incomps
-        | _ -> incompat_propagation ~versions state changed incomps)
+            incompat_propagation ~vers state (name :: changed) incomps
+        | _ -> incompat_propagation ~vers state changed incomps)
 
   (* a negative term over the empty range can never be violated: drop it *)
   let drop_tautologies =
     List.filter (function Neg, _, r -> not (Ranges.is_empty r) | _ -> true)
 
-  let dependency_incomps ~versions ~dependencies n version =
-    let all_versions = versions n in
+  let dependency_incomps ~vers ~deps n version =
+    let all_versions = vers n in
     List.map
       (fun (dep_name, dep_range) ->
         let has_dep v =
           List.exists
             (fun (dn, dr) -> N.compare dn dep_name = 0 && Ranges.equal dr dep_range)
-            (dependencies n v)
+            (deps n v)
         in
         let depender_range = Ranges.contiguous version all_versions has_dep in
         {
@@ -180,15 +180,15 @@ module Make (N : NameType) (V : VersionType) = struct
               [ (Pos, Name n, depender_range); (Neg, Name dep_name, dep_range) ];
           cause = Dependency ((n, version), (Name dep_name, dep_range));
         })
-      (dependencies n version)
+      (deps n version)
 
-  let make_decision ~versions ~dependencies state =
+  let make_decision ~vers ~deps state =
     let find_undecided_term () =
       match PQ.min_elt state.candidates with
       | None -> None
       | Some (_, n) ->
           let _, sr = PS.name_range state.partial_solution n in
-          let real_vs = List.filter (fun v -> Ranges.contains v sr) (versions n) in
+          let real_vs = List.filter (fun v -> Ranges.contains v sr) (vers n) in
           Some (n, real_vs)
     in
     let* n, real_vs = find_undecided_term () in
@@ -206,7 +206,7 @@ module Make (N : NameType) (V : VersionType) = struct
         let version = List.hd (List.sort (fun a b -> V.compare b a) real_vs) in
         debug_printf "trying version %a\n" V.pp version;
         let dep_incomps =
-          dependency_incomps ~versions ~dependencies n version
+          dependency_incomps ~vers ~deps n version
           |> List.filter (fun i -> not (Incomp.mem i state.incomps))
         in
         if List.length dep_incomps > 0 then
@@ -214,8 +214,7 @@ module Make (N : NameType) (V : VersionType) = struct
             dep_incomps;
         let state = add_incomps state dep_incomps in
         let trial_state =
-          add_assignment ~versions { state with decision_level }
-            (PS.Decision (n, version))
+          add_assignment ~vers { state with decision_level } (PS.Decision (n, version))
         in
         let conflicts =
           List.exists
@@ -250,14 +249,13 @@ module Make (N : NameType) (V : VersionType) = struct
 
   type query = (N.t * Ranges.t) list
 
-  let solve ~versions ~dependencies (query : query) :
-      ((N.t * V.t) list, incompatibility) Result.t =
+  let solve ~vers ~deps (query : query) : ((N.t * V.t) list, incompatibility) Result.t =
     let root_deps = List.map (fun (name, range) -> (Name name, range)) query in
     let rec solve_loop state next =
-      match unit_propagation ~versions state [ next ] with
+      match unit_propagation ~vers state [ next ] with
       | Error incomp -> Error incomp
       | Ok state -> (
-          match make_decision ~versions ~dependencies state with
+          match make_decision ~vers ~deps state with
           | None -> Ok (extract_resolution state)
           | Some (next, state) -> solve_loop state next)
     in

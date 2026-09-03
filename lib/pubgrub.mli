@@ -21,8 +21,8 @@ module Make (N : NameType) (V : VersionType) : sig
   type query = (N.t * Ranges.t) list
 
   val solve :
-    versions:(N.t -> V.t list) ->
-    dependencies:(N.t -> V.t -> (N.t * Ranges.t) list) ->
+    vers:(N.t -> V.t list) ->
+    deps:(N.t -> V.t -> (N.t * Ranges.t) list) ->
     query ->
     ((N.t * V.t) list, incompatibility) Result.t
 

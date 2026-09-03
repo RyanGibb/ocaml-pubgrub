@@ -23,9 +23,9 @@ let solve_ranges repo deps query =
   List.iter (fun (n, v) -> Hashtbl.add repo_tbl n v) repo;
   let dep_tbl = Hashtbl.create 16 in
   List.iter (fun (pkg, dep) -> Hashtbl.add dep_tbl pkg dep) deps;
-  let versions n = Hashtbl.find_all repo_tbl n in
-  let dependencies n v = Hashtbl.find_all dep_tbl (n, v) in
-  let result = Solver.solve ~versions ~dependencies query in
+  let vers n = Hashtbl.find_all repo_tbl n in
+  let deps n v = Hashtbl.find_all dep_tbl (n, v) in
+  let result = Solver.solve ~vers ~deps query in
   Format.printf "%a\n" pp_result result
 
 (* Ranges given as version lists, which is all most tests need. *)

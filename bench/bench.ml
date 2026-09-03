@@ -24,9 +24,9 @@ let make_solver repo deps =
   List.iter (fun (n, v) -> Hashtbl.add repo_tbl n v) repo;
   let dep_tbl = Hashtbl.create 16 in
   List.iter (fun ((n, v), (dn, dvs)) -> Hashtbl.add dep_tbl (n, v) (dn, dvs)) deps;
-  let versions n = Hashtbl.find_all repo_tbl n in
-  let dependencies n v = Hashtbl.find_all dep_tbl (n, v) in
-  (versions, dependencies)
+  let vers n = Hashtbl.find_all repo_tbl n in
+  let deps n v = Hashtbl.find_all dep_tbl (n, v) in
+  (vers, deps)
 
 let deep_chain n =
   let repo = List.init (n + 1) (fun i -> ("A" ^ v i, v 0)) in
@@ -148,16 +148,16 @@ let realistic n =
 
 (* Every query constraint and every decided package's dependencies must be
    satisfied by the returned solution. *)
-let validate ~dependencies query solution =
+let validate ~deps query solution =
   let find n = List.find_opt (fun (n', _) -> String.equal n n') solution in
   let satisfied (n, r) =
     match find n with Some (_, ver) -> Solver.Ranges.contains ver r | None -> false
   in
   List.for_all satisfied query
-  && List.for_all (fun (n, ver) -> List.for_all satisfied (dependencies n ver)) solution
+  && List.for_all (fun (n, ver) -> List.for_all satisfied (deps n ver)) solution
 
 let run shape n reps =
-  let (versions, dependencies), query =
+  let (vers, deps), query =
     match shape with
     | "deep_chain" -> deep_chain n
     | "wide_fan" -> wide_fan n
@@ -168,12 +168,10 @@ let run shape n reps =
     | "realistic" -> realistic n
     | _ -> failwith (Printf.sprintf "unknown shape: %s" shape)
   in
-  let runs =
-    List.init reps (fun _ -> time (fun () -> Solver.solve ~versions ~dependencies query))
-  in
+  let runs = List.init reps (fun _ -> time (fun () -> Solver.solve ~vers ~deps query)) in
   let status =
     match fst (List.hd runs) with
-    | Ok solution -> if validate ~dependencies query solution then "ok" else "INVALID"
+    | Ok solution -> if validate ~deps query solution then "ok" else "INVALID"
     | Error _ -> "error"
   in
   let times = List.map snd runs in
