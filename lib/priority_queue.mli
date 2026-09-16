@@ -17,4 +17,7 @@ module Make (N : Types.NameType) : sig
 
   val min_elt : t -> (int * N.t) option
   (** [min_elt pq]: the smallest [(priority, name)] pair, or [None] when empty. *)
+
+  val to_list : t -> (int * N.t) list
+  (** [to_list pq]: every [(priority, name)] pair in priority order. O(n). *)
 end

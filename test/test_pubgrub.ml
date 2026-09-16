@@ -799,3 +799,38 @@ let%expect_test "choose outside the candidates falls back" =
   let choose ~assigned:_ _ _ = "no-such-version" in
   solve_choose ~choose:(Some choose) repo deps query;
   [%expect {| b 1, sel b, a 1, root 1 |}]
+
+(* Debug output is off here too: these are about which name gets decided
+   first, which the order of the printed assignments already shows. *)
+let solve_next ~next repo deps query =
+  Pubgrub.set_debug false;
+  let repo_tbl = Hashtbl.create 16 in
+  List.iter (fun (n, v) -> Hashtbl.add repo_tbl n v) repo;
+  let dep_tbl = Hashtbl.create 16 in
+  List.iter (fun (pkg, dep) -> Hashtbl.add dep_tbl pkg dep) deps;
+  let vers n = Hashtbl.find_all repo_tbl n in
+  let deps n v =
+    List.map
+      (fun (dn, dvs) -> (dn, Solver.Ranges.of_list dvs))
+      (Hashtbl.find_all dep_tbl (n, v))
+  in
+  let query = List.map (fun (n, vs) -> (n, Solver.Ranges.of_list vs)) query in
+  let result = Solver.solve ?next ~vers ~deps query in
+  Format.printf "%a\n" pp_result result;
+  Pubgrub.set_debug true
+
+let%expect_test "next omitted" =
+  solve_next ~next:None repo deps query;
+  [%expect {| b 1, sel b, a 1, root 1 |}]
+
+let%expect_test "next takes the most-constrained name last" =
+  let next ~assigned:_ open_names =
+    fst (List.hd (List.rev open_names))
+  in
+  solve_next ~next:(Some next) repo deps query;
+  [%expect {| a 1, b 1, sel b, root 1 |}]
+
+let%expect_test "next outside the open names falls back" =
+  let next ~assigned:_ _ = "no-such-name" in
+  solve_next ~next:(Some next) repo deps query;
+  [%expect {| b 1, sel b, a 1, root 1 |}]

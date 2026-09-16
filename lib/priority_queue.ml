@@ -32,4 +32,5 @@ module Make (N : Types.NameType) = struct
 
   let update pq n p = insert (remove pq n) n p
   let min_elt pq = EntrySet.min_elt_opt pq.by_priority
+  let to_list pq = EntrySet.elements pq.by_priority
 end

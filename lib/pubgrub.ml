@@ -184,11 +184,27 @@ module Make (N : NameType) (V : VersionType) = struct
 
   let greatest vs = List.hd (List.sort (fun a b -> V.compare b a) vs)
 
-  let make_decision ~vers ~deps ?choose state =
+  let make_decision ~vers ~deps ?next ?choose state =
     let find_undecided_term () =
       match PQ.min_elt state.candidates with
       | None -> None
-      | Some (_, n) ->
+      | Some (_, dflt) ->
+          let n =
+            match next with
+            | None -> dflt
+            | Some pick ->
+                (* which undecided name is decided first is a heuristic, so any
+                   name still in the queue is a sound answer; one outside it is
+                   not, and leaves the queue's own choice standing *)
+                let open_names =
+                  List.map (fun (c, n) -> (n, c)) (PQ.to_list state.candidates)
+                in
+                let assigned n = PS.selection state.partial_solution n in
+                let n = pick ~assigned open_names in
+                let matches (m, _) = m == n || N.compare m n = 0 in
+                Option.fold ~none:dflt ~some:fst
+                  (List.find_opt matches open_names)
+          in
           let _, sr = PS.name_range state.partial_solution n in
           let real_vs = List.filter (fun v -> Ranges.contains v sr) (vers n) in
           Some (n, real_vs)
@@ -261,16 +277,16 @@ module Make (N : NameType) (V : VersionType) = struct
 
   type query = (N.t * Ranges.t) list
 
-  let solve ?choose ~vers ~deps (query : query) :
+  let solve ?next ?choose ~vers ~deps (query : query) :
       ((N.t * V.t) list, incompatibility) Result.t =
     let root_deps = List.map (fun (name, range) -> (Name name, range)) query in
-    let rec solve_loop state next =
-      match unit_propagation ~vers state [ next ] with
+    let rec solve_loop state decided =
+      match unit_propagation ~vers state [ decided ] with
       | Error incomp -> Error incomp
       | Ok state -> (
-          match make_decision ~vers ~deps ?choose state with
+          match make_decision ~vers ~deps ?next ?choose state with
           | None -> Ok (extract_resolution state)
-          | Some (next, state) -> solve_loop state next)
+          | Some (decided, state) -> solve_loop state decided)
     in
     let incomps = init_incomps root_deps in
     debug_printf "initial incompatibilities\n\t%a\n" pp_incompatibilities incomps;
