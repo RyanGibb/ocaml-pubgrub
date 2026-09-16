@@ -15,7 +15,7 @@ module Make (N : Types.NameType) (V : Types.VersionType) = struct
     level : decision_level;
     assignment : assignment;
     state : bool * Ranges.t; (* (has_positive, range) after this assignment *)
-    decided : bool; (* some assignment up to this one is a Decision *)
+    decided : V.t option; (* the version the Decision up to this one chose *)
   }
 
   (* Assignment levels are non-decreasing in chronological order (backtracking
@@ -62,9 +62,7 @@ module Make (N : Types.NameType) (V : Types.VersionType) = struct
     | Decision (n, _) | Derivation ((_, Name n, _), _) ->
         let entries = Option.value (NameMap.find_opt n ps.by_name) ~default:[] in
         let prev_state, prev_decided =
-          match entries with
-          | e :: _ -> (e.state, e.decided)
-          | [] -> (initial_state, false)
+          match entries with e :: _ -> (e.state, e.decided) | [] -> (initial_state, None)
         in
         let entry =
           {
@@ -72,7 +70,7 @@ module Make (N : Types.NameType) (V : Types.VersionType) = struct
             level = lvl;
             assignment = a;
             state = apply_assignment prev_state a;
-            decided = (prev_decided || match a with Decision _ -> true | _ -> false);
+            decided = (match a with Decision (_, v) -> Some v | _ -> prev_decided);
           }
         in
         let decided_names =
@@ -123,10 +121,11 @@ module Make (N : Types.NameType) (V : Types.VersionType) = struct
                 NameSet.remove n undecided )
           | e :: _ ->
               let decided =
-                if e.decided then NameSet.add n decided else NameSet.remove n decided
+                if Option.is_some e.decided then NameSet.add n decided
+                else NameSet.remove n decided
               in
               let undecided =
-                if fst e.state && not e.decided then NameSet.add n undecided
+                if fst e.state && Option.is_none e.decided then NameSet.add n undecided
                 else NameSet.remove n undecided
               in
               (NameMap.add n entries by_name, decided, undecided))
@@ -149,6 +148,14 @@ module Make (N : Types.NameType) (V : Types.VersionType) = struct
     match NameMap.find_opt n ps.by_name with
     | Some (e :: _) -> e.state
     | _ -> initial_state
+
+  let selection ps n =
+    match NameMap.find_opt n ps.by_name with
+    | None | Some [] -> Unselected
+    | Some (e :: _) -> (
+        let has_pos, sr = e.state in
+        if not has_pos then Unselected
+        else match e.decided with Some v -> Decided v | None -> Entailed sr)
 
   let is_decided ps n = NameSet.mem n ps.decided_names
   let root_selected ps = ps.root <> None

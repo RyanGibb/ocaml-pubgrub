@@ -27,6 +27,7 @@ module Make (N : Types.NameType) (V : Types.VersionType) : sig
   (** [name_range ps n]: [(has_pos, r)] where [r] is the intersection of all constraints
       on [n] and [has_pos] is true iff some assignment forces [n] to be selected. *)
 
+  val selection : t -> N.t -> selection
   val is_decided : t -> N.t -> bool
   val root_selected : t -> bool
 

@@ -20,11 +20,22 @@ module Make (N : NameType) (V : VersionType) : sig
   type incompatibility
   type query = (N.t * Ranges.t) list
 
+  (** What the partial solution says about a name. [Entailed r] is already forced into the
+      solution, with [r] the versions still open to it; it will be decided before solving
+      ends, so it counts as selected alongside [Decided]. *)
+  type selection = Unselected | Entailed of Ranges.t | Decided of V.t
+
   val solve :
+    ?choose:(assigned:(N.t -> selection) -> N.t -> V.t list -> V.t) ->
     vers:(N.t -> V.t list) ->
     deps:(N.t -> V.t -> (N.t * Ranges.t) list) ->
     query ->
     ((N.t * V.t) list, incompatibility) Result.t
+  (** [choose ~assigned n candidates] picks which of [candidates] to try for [n], given
+      [assigned], what the partial solution currently says about any name. [candidates] is
+      non-empty and holds the versions of [n] the accumulated constraints still allow; a
+      result outside it is discarded, so the hook can reorder but never widen the search.
+      Omitted, the solver takes the greatest candidate by [V.compare]. *)
 
   val explain_incompatibility : Format.formatter -> incompatibility -> unit
 end

@@ -182,7 +182,9 @@ module Make (N : NameType) (V : VersionType) = struct
         })
       (deps n version)
 
-  let make_decision ~vers ~deps state =
+  let greatest vs = List.hd (List.sort (fun a b -> V.compare b a) vs)
+
+  let make_decision ~vers ~deps ?choose state =
     let find_undecided_term () =
       match PQ.min_elt state.candidates with
       | None -> None
@@ -203,7 +205,17 @@ module Make (N : NameType) (V : VersionType) = struct
         let state = add_incomp state incomp in
         Some (Name n, state)
     | _ ->
-        let version = List.hd (List.sort (fun a b -> V.compare b a) real_vs) in
+        let version =
+          match choose with
+          | None -> greatest real_vs
+          | Some pick ->
+              (* a pick from outside [real_vs] would decide a version the
+                 current constraints exclude, so it is discarded *)
+              let assigned n = PS.selection state.partial_solution n in
+              let v = pick ~assigned n real_vs in
+              let matches c = c == v || V.compare c v = 0 in
+              Option.value (List.find_opt matches real_vs) ~default:(greatest real_vs)
+        in
         debug_printf "trying version %a\n" V.pp version;
         let dep_incomps =
           dependency_incomps ~vers ~deps n version
@@ -249,13 +261,14 @@ module Make (N : NameType) (V : VersionType) = struct
 
   type query = (N.t * Ranges.t) list
 
-  let solve ~vers ~deps (query : query) : ((N.t * V.t) list, incompatibility) Result.t =
+  let solve ?choose ~vers ~deps (query : query) :
+      ((N.t * V.t) list, incompatibility) Result.t =
     let root_deps = List.map (fun (name, range) -> (Name name, range)) query in
     let rec solve_loop state next =
       match unit_propagation ~vers state [ next ] with
       | Error incomp -> Error incomp
       | Ok state -> (
-          match make_decision ~vers ~deps state with
+          match make_decision ~vers ~deps ?choose state with
           | None -> Ok (extract_resolution state)
           | Some (next, state) -> solve_loop state next)
     in

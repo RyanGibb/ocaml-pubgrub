@@ -747,3 +747,55 @@ let%expect_test "unconstrained dependency" =
     unit propagation on: bar
     bar 2, foo 1
     |}]
+
+(* Debug output is off here: these are about which candidate comes back, not
+   the trace that got there. *)
+let solve_choose ~choose repo deps query =
+  Pubgrub.set_debug false;
+  let repo_tbl = Hashtbl.create 16 in
+  List.iter (fun (n, v) -> Hashtbl.add repo_tbl n v) repo;
+  let dep_tbl = Hashtbl.create 16 in
+  List.iter (fun (pkg, dep) -> Hashtbl.add dep_tbl pkg dep) deps;
+  let vers n = Hashtbl.find_all repo_tbl n in
+  let deps n v =
+    List.map
+      (fun (dn, dvs) -> (dn, Solver.Ranges.of_list dvs))
+      (Hashtbl.find_all dep_tbl (n, v))
+  in
+  let query = List.map (fun (n, vs) -> (n, Solver.Ranges.of_list vs)) query in
+  let result = Solver.solve ?choose ~vers ~deps query in
+  Format.printf "%a\n" pp_result result;
+  Pubgrub.set_debug true
+
+let repo = [ ("root", "1"); ("sel", "a"); ("sel", "b"); ("a", "1"); ("b", "1") ]
+
+let deps =
+  [
+    (("root", "1"), ("sel", [ "a"; "b" ]));
+    (("root", "1"), ("a", [ "1" ]));
+    (("sel", "a"), ("a", [ "1" ]));
+    (("sel", "b"), ("b", [ "1" ]));
+  ]
+
+let query = [ ("root", [ "1" ]) ]
+
+let%expect_test "choose omitted" =
+  solve_choose ~choose:None repo deps query;
+  [%expect {| b 1, sel b, a 1, root 1 |}]
+
+let%expect_test "choose prefers an already-selected target" =
+  let target = function "a" -> "a" | _ -> "b" in
+  let choose ~assigned n cands =
+    if n <> "sel" then List.hd (List.sort (fun x y -> compare y x) cands)
+    else
+      match List.find_opt (fun c -> assigned (target c) <> Solver.Unselected) cands with
+      | Some c -> c
+      | None -> List.hd cands
+  in
+  solve_choose ~choose:(Some choose) repo deps query;
+  [%expect {| sel a, a 1, root 1 |}]
+
+let%expect_test "choose outside the candidates falls back" =
+  let choose ~assigned:_ _ _ = "no-such-version" in
+  solve_choose ~choose:(Some choose) repo deps query;
+  [%expect {| b 1, sel b, a 1, root 1 |}]

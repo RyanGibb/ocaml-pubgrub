@@ -34,6 +34,9 @@ module Make (N : NameType) (V : VersionType) = struct
   type polarity = Pos | Neg
   type term = polarity * name * Ranges.t
 
+  (* [Entailed] is forced into the solution but not yet given a version. *)
+  type selection = Unselected | Entailed of Ranges.t | Decided of V.t
+
   type cause =
     | NoVersions
     | Dependency of package * (name * Ranges.t)

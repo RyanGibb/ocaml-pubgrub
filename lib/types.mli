@@ -22,6 +22,10 @@ module Make (N : NameType) (V : VersionType) : sig
   type polarity = Pos | Neg
   type term = polarity * name * Ranges.t
 
+  (** What the partial solution says about a name: [Entailed r] is forced into the
+      solution with [r] the versions still open to it, [Decided v] has its version. *)
+  type selection = Unselected | Entailed of Ranges.t | Decided of V.t
+
   type cause =
     | NoVersions
     | Dependency of package * (name * Ranges.t)
