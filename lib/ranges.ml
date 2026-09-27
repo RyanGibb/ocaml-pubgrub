@@ -41,25 +41,37 @@ module Make (V : OrderedType) = struct
      names no version outside [sorted]: one listed later need not satisfy
      [pred], and an incompatibility recorded over it would outlive the list.
      [dense a b] says nothing can ever be listed strictly between the adjacent
-     [a] and [b], so the block may span them with one interval.
+     [a] and [b], so the block may span them with one interval, and its top
+     may run up to, excluding, the listed version above it, which lets the
+     ranges of neighbouring blocks merge.
      Precondition: pred current = true. *)
   let contiguous ?(dense = fun _ _ -> false) current sorted pred =
     let sorted = List.sort_uniq V.compare sorted in
     let below = List.rev (List.filter (fun v -> V.compare v current < 0) sorted) in
     let above = List.filter (fun v -> V.compare v current > 0) sorted in
-    let rec take = function v :: rest when pred v -> v :: take rest | _ -> [] in
-    let block = List.rev_append (take below) (current :: take above) in
+    let rec take = function
+      | v :: rest when pred v ->
+          let block, after = take rest in
+          (v :: block, after)
+      | rest -> ([], rest)
+    in
+    let lower, _ = take below in
+    let upper, after = take above in
+    let top hi =
+      match after with next :: _ when dense hi next -> Excluded next | _ -> Included hi
+    in
     let rec runs = function
       | [] -> []
-      | lo :: rest ->
+      | lo :: rest -> (
           let rec extend hi = function
             | v :: rest when dense hi v -> extend v rest
             | rest -> (hi, rest)
           in
-          let hi, rest = extend lo rest in
-          (Included lo, Included hi) :: runs rest
+          match extend lo rest with
+          | hi, [] -> [ (Included lo, top hi) ]
+          | hi, rest -> (Included lo, Included hi) :: runs rest)
     in
-    runs block
+    runs (List.rev_append lower (current :: upper))
 
   let of_list vs =
     List.sort_uniq V.compare vs |> List.map (fun v -> (Included v, Included v))

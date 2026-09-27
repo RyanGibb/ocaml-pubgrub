@@ -62,7 +62,7 @@ module Make (N : NameType) (V : VersionType) : sig
       A dependency incompatibility names its depender's versions as points, as one listed
       later need not share the dependency. [dense n a b] says no version of [n] can ever
       be listed strictly between the adjacent listed [a] and [b], so it may span them with
-      one interval. *)
+      one interval, or run up to [b], excluding it, when [b] lacks the dependency. *)
 
   val explain_incompatibility : Format.formatter -> incompatibility -> unit
 end

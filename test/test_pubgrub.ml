@@ -962,3 +962,22 @@ let%expect_test "contiguous - points, or intervals where dense" =
     2 ∪ 3 ∪ 4 ∪ 5
     [2, 4] ∪ 5
     |}]
+
+(* 1 and 5 lack the dependency; with dense, the block runs up to 5. *)
+let%expect_test "contiguous - a dense block runs up to the next listed version" =
+  let has_dep v = v <> "1" && v <> "5" in
+  let vs = [ "1"; "2"; "3"; "4"; "5" ] in
+  let pp = Solver.Ranges.pp in
+  let all _ _ = true in
+  let inner a b = a >= "2" && b <= "4" in
+  Format.printf "%a\n%a\n%a\n" pp
+    (Solver.Ranges.contiguous "3" vs has_dep)
+    pp
+    (Solver.Ranges.contiguous ~dense:inner "3" vs has_dep)
+    pp
+    (Solver.Ranges.contiguous ~dense:all "3" vs has_dep);
+  [%expect {|
+    2 ∪ 3 ∪ 4
+    [2, 4]
+    [2, 5)
+    |}]
