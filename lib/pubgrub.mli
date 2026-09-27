@@ -28,6 +28,7 @@ module Make (N : NameType) (V : VersionType) : sig
   val solve :
     ?next:(assigned:(N.t -> selection) -> (N.t * int) list -> N.t) ->
     ?choose:(assigned:(N.t -> selection) -> N.t -> V.t list -> V.t) ->
+    ?dense:(N.t -> V.t -> V.t -> bool) ->
     vers:(N.t -> V.t list) ->
     deps:(N.t -> V.t -> (N.t * Ranges.t) list) ->
     query ->
@@ -45,7 +46,23 @@ module Make (N : NameType) (V : VersionType) : sig
       widen the search. Omitted, the solver takes the greatest candidate by [V.compare].
 
       Both hooks receive [assigned], what the partial solution currently says about any
-      name. Omitting them leaves the solver's behaviour exactly as it was. *)
+      name. Omitting them leaves the solver's behaviour exactly as it was.
+
+      The lookups may be those of an instance still being loaded, provided that:
+      - [vers n] may grow between calls, and only grow;
+      - [deps n v] is the same at every call;
+      - every range in [deps] and in the query names only versions [vers] lists when the
+        range is handed over, and no interval in it can later take in a version listed
+        after it.
+
+      Every range the solver records then names only listed versions, so it never records
+      that some range of a name has no versions, and the outcome is that of the final
+      lists: a solution is one of theirs, and a failure proves they have none.
+
+      A dependency incompatibility names its depender's versions as points, as one listed
+      later need not share the dependency. [dense n a b] says no version of [n] can ever
+      be listed strictly between the adjacent listed [a] and [b], so it may span them with
+      one interval. *)
 
   val explain_incompatibility : Format.formatter -> incompatibility -> unit
 end

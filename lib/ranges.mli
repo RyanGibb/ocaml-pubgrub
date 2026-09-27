@@ -17,7 +17,7 @@ module Make (V : OrderedType) : sig
   val lower_than : V.t -> t
   val strictly_lower_than : V.t -> t
   val between : V.t -> V.t -> t
-  val contiguous : V.t -> V.t list -> (V.t -> bool) -> t
+  val contiguous : ?dense:(V.t -> V.t -> bool) -> V.t -> V.t list -> (V.t -> bool) -> t
   val union : t -> t -> t
   val intersection : t -> t -> t
   val complement : t -> t

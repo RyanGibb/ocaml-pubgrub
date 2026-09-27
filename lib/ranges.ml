@@ -37,30 +37,29 @@ module Make (V : OrderedType) = struct
   let between lo hi =
     if V.compare lo hi >= 0 then empty else [ (Included lo, Excluded hi) ]
 
-  (* Find the contiguous block of pred-satisfying versions containing current
-     and produce a range covering it. Extends to -∞/+∞ when the block reaches
-     the edges of [sorted]. Precondition: pred current = true. *)
-  let contiguous current sorted pred =
+  (* The block of [pred]-satisfying versions of [sorted] around [current]
+     names no version outside [sorted]: one listed later need not satisfy
+     [pred], and an incompatibility recorded over it would outlive the list.
+     [dense a b] says nothing can ever be listed strictly between the adjacent
+     [a] and [b], so the block may span them with one interval.
+     Precondition: pred current = true. *)
+  let contiguous ?(dense = fun _ _ -> false) current sorted pred =
     let sorted = List.sort_uniq V.compare sorted in
-    let below = List.filter (fun v -> V.compare v current < 0) sorted in
+    let below = List.rev (List.filter (fun v -> V.compare v current < 0) sorted) in
     let above = List.filter (fun v -> V.compare v current > 0) sorted in
-    let rec walk_up = function
-      | [] -> None
-      | v :: _ when not (pred v) -> Some v
-      | _ :: rest -> walk_up rest
+    let rec take = function v :: rest when pred v -> v :: take rest | _ -> [] in
+    let block = List.rev_append (take below) (current :: take above) in
+    let rec runs = function
+      | [] -> []
+      | lo :: rest ->
+          let rec extend hi = function
+            | v :: rest when dense hi v -> extend v rest
+            | rest -> (hi, rest)
+          in
+          let hi, rest = extend lo rest in
+          (Included lo, Included hi) :: runs rest
     in
-    let rec walk_down lo = function
-      | [] -> (lo, false)
-      | v :: _ when not (pred v) -> (lo, true)
-      | v :: rest -> walk_down v rest
-    in
-    let upper = walk_up above in
-    let lo, has_lower = walk_down current (List.rev below) in
-    match (has_lower, upper) with
-    | false, None -> full
-    | false, Some u -> strictly_lower_than u
-    | true, None -> higher_than lo
-    | true, Some u -> between lo u
+    runs block
 
   let of_list vs =
     List.sort_uniq V.compare vs |> List.map (fun v -> (Included v, Included v))

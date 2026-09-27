@@ -164,8 +164,9 @@ module Make (N : NameType) (V : VersionType) = struct
   let drop_tautologies =
     List.filter (function Neg, _, r -> not (Ranges.is_empty r) | _ -> true)
 
-  let dependency_incomps ~vers ~deps n version =
+  let dependency_incomps ?dense ~vers ~deps n version =
     let all_versions = vers n in
+    let dense = Option.map (fun d -> d n) dense in
     List.map
       (fun (dep_name, dep_range) ->
         let has_dep v =
@@ -173,7 +174,7 @@ module Make (N : NameType) (V : VersionType) = struct
             (fun (dn, dr) -> N.compare dn dep_name = 0 && Ranges.equal dr dep_range)
             (deps n v)
         in
-        let depender_range = Ranges.contiguous version all_versions has_dep in
+        let depender_range = Ranges.contiguous ?dense version all_versions has_dep in
         {
           terms =
             drop_tautologies
@@ -184,7 +185,7 @@ module Make (N : NameType) (V : VersionType) = struct
 
   let greatest vs = List.hd (List.sort (fun a b -> V.compare b a) vs)
 
-  let make_decision ~vers ~deps ?next ?choose state =
+  let make_decision ?dense ~vers ~deps ?next ?choose state =
     let find_undecided_term () =
       match PQ.min_elt state.candidates with
       | None -> None
@@ -233,7 +234,7 @@ module Make (N : NameType) (V : VersionType) = struct
         in
         debug_printf "trying version %a\n" V.pp version;
         let dep_incomps =
-          dependency_incomps ~vers ~deps n version
+          dependency_incomps ?dense ~vers ~deps n version
           |> List.filter (fun i -> not (Incomp.mem i state.incomps))
         in
         if List.length dep_incomps > 0 then
@@ -276,14 +277,14 @@ module Make (N : NameType) (V : VersionType) = struct
 
   type query = (N.t * Ranges.t) list
 
-  let solve ?next ?choose ~vers ~deps (query : query) :
+  let solve ?next ?choose ?dense ~vers ~deps (query : query) :
       ((N.t * V.t) list, incompatibility) Result.t =
     let root_deps = List.map (fun (name, range) -> (Name name, range)) query in
     let rec solve_loop state decided =
       match unit_propagation ~vers state [ decided ] with
       | Error incomp -> Error incomp
       | Ok state -> (
-          match make_decision ~vers ~deps ?next ?choose state with
+          match make_decision ?dense ~vers ~deps ?next ?choose state with
           | None -> Ok (extract_resolution state)
           | Some (decided, state) -> solve_loop state decided)
     in
