@@ -413,7 +413,7 @@ let%expect_test "branching error" =
     satisfiying assignment on level 0: Derivation foo 1.0.0 due to incompatibility (terms: {Root *, not foo 1.0.0}, cause: dependency root -> foo 1.0.0)
     prior cause (terms: {Root *}, cause: ((terms: {foo (-∞, 1.1.0)}, cause: ((terms: {foo (-∞, 1.1.0), not a 1.0.0}, cause: dependency foo 1.0.0 -> a 1.0.0) and (terms: {foo (-∞, 1.1.0), a *}, cause: ((terms: {a *, not b 2.0.0}, cause: dependency a 1.0.0 -> b 2.0.0) and (terms: {foo (-∞, 1.1.0), not b 1.0.0}, cause: dependency foo 1.0.0 -> b 1.0.0))))) and (terms: {Root *, not foo 1.0.0}, cause: dependency root -> foo 1.0.0)))
     conflict resolution on: (terms: {Root *}, cause: ((terms: {foo (-∞, 1.1.0)}, cause: ((terms: {foo (-∞, 1.1.0), not a 1.0.0}, cause: dependency foo 1.0.0 -> a 1.0.0) and (terms: {foo (-∞, 1.1.0), a *}, cause: ((terms: {a *, not b 2.0.0}, cause: dependency a 1.0.0 -> b 2.0.0) and (terms: {foo (-∞, 1.1.0), not b 1.0.0}, cause: dependency foo 1.0.0 -> b 1.0.0))))) and (terms: {Root *, not foo 1.0.0}, cause: dependency root -> foo 1.0.0)))
-    Because a 1.0.0 -> b 2.0.0 and foo 1.0.0 -> b 1.0.0, foo (-∞, 1.1.0) or a * is forbidden..
+    Because a 1.0.0 -> b 2.0.0 and foo 1.0.0 -> b 1.0.0, foo (-∞, 1.1.0) or a * is forbidden.
     And because foo 1.0.0 -> a 1.0.0 and root -> foo 1.0.0, version solving failed.
     |}]
 
@@ -565,7 +565,7 @@ let%expect_test "unsatisfiable dependency - empty range" =
     satisfiying assignment on level 0: Derivation foo 1.0.0 due to incompatibility (terms: {Root *, not foo 1.0.0}, cause: dependency root -> foo 1.0.0)
     prior cause (terms: {Root *}, cause: ((terms: {foo *}, cause: dependency foo 1.0.0 -> bar ∅) and (terms: {Root *, not foo 1.0.0}, cause: dependency root -> foo 1.0.0)))
     conflict resolution on: (terms: {Root *}, cause: ((terms: {foo *}, cause: dependency foo 1.0.0 -> bar ∅) and (terms: {Root *, not foo 1.0.0}, cause: dependency root -> foo 1.0.0)))
-    Because foo 1.0.0 -> bar ∅ and root -> foo 1.0.0, version solving failed..
+    Because foo 1.0.0 -> bar ∅ and root -> foo 1.0.0, version solving failed.
     |}]
 
 (* Likewise for an empty range in the query itself. *)
@@ -578,6 +578,46 @@ let%expect_test "unsatisfiable root dependency - empty range" =
     unit propagation on: Root
     conflict resolution on: (terms: {Root *}, cause: dependency root -> foo ∅)
     root -> foo ∅
+    |}]
+
+let%expect_test "no versions - missing dependency version" =
+  solve
+    [ ("foo", "1.0.0"); ("bar", "1.0.0") ]
+    [ (("foo", "1.0.0"), ("bar", [ "2.0.0" ])) ]
+    [ ("foo", [ "1.0.0" ]) ];
+  [%expect
+    {|
+    initial incompatibilities
+    (terms: {Root *, not foo 1.0.0}, cause: dependency root -> foo 1.0.0)
+    unit propagation on: Root
+    new assignment on level 0: Derivation foo 1.0.0 due to incompatibility (terms: {Root *, not foo 1.0.0}, cause: dependency root -> foo 1.0.0)
+    unit propagation on: foo
+    deciding on foo: 1.0.0
+    trying version 1.0.0
+    dependency incompatibilities
+    (terms: {foo *, not bar 2.0.0}, cause: dependency foo 1.0.0 -> bar 2.0.0)
+    assignment on level 1: Decision foo 1.0.0
+    unit propagation on: foo
+    new assignment on level 1: Derivation bar 2.0.0 due to incompatibility (terms: {foo *, not bar 2.0.0}, cause: dependency foo 1.0.0 -> bar 2.0.0)
+    unit propagation on: bar
+    deciding on bar: 2.0.0
+    no versions found, adding incompatiblity (terms: {bar 2.0.0}, cause: no versions)
+    unit propagation on: bar
+    conflict resolution on: (terms: {bar 2.0.0}, cause: no versions)
+    satisfiying assignment on level 1: Derivation bar 2.0.0 due to incompatibility (terms: {foo *, not bar 2.0.0}, cause: dependency foo 1.0.0 -> bar 2.0.0)
+    backtracking to level 0
+    solution: (0: Derivation foo 1.0.0 due to incompatibility (terms: {Root *, not foo 1.0.0}, cause: dependency root -> foo 1.0.0)), (0: Decision root)
+    new assignment on level 0: Derivation not bar 2.0.0 due to incompatibility (terms: {bar 2.0.0}, cause: no versions)
+    unit propagation on: bar
+    conflict resolution on: (terms: {foo *, not bar 2.0.0}, cause: dependency foo 1.0.0 -> bar 2.0.0)
+    satisfiying assignment on level 0: Derivation not bar 2.0.0 due to incompatibility (terms: {bar 2.0.0}, cause: no versions)
+    prior cause (terms: {foo *}, cause: ((terms: {foo *, not bar 2.0.0}, cause: dependency foo 1.0.0 -> bar 2.0.0) and (terms: {bar 2.0.0}, cause: no versions)))
+    conflict resolution on: (terms: {foo *}, cause: ((terms: {foo *, not bar 2.0.0}, cause: dependency foo 1.0.0 -> bar 2.0.0) and (terms: {bar 2.0.0}, cause: no versions)))
+    satisfiying assignment on level 0: Derivation foo 1.0.0 due to incompatibility (terms: {Root *, not foo 1.0.0}, cause: dependency root -> foo 1.0.0)
+    prior cause (terms: {Root *}, cause: ((terms: {foo *}, cause: ((terms: {foo *, not bar 2.0.0}, cause: dependency foo 1.0.0 -> bar 2.0.0) and (terms: {bar 2.0.0}, cause: no versions))) and (terms: {Root *, not foo 1.0.0}, cause: dependency root -> foo 1.0.0)))
+    conflict resolution on: (terms: {Root *}, cause: ((terms: {foo *}, cause: ((terms: {foo *, not bar 2.0.0}, cause: dependency foo 1.0.0 -> bar 2.0.0) and (terms: {bar 2.0.0}, cause: no versions))) and (terms: {Root *, not foo 1.0.0}, cause: dependency root -> foo 1.0.0)))
+    Because foo 1.0.0 -> bar 2.0.0 and no versions of bar match 2.0.0, foo * is forbidden.
+    And because root -> foo 1.0.0, version solving failed.
     |}]
 
 (* [opt] is only required by foo 2, and both its versions dead-end. Ruling out
@@ -824,9 +864,7 @@ let%expect_test "next omitted" =
   [%expect {| b 1, sel b, a 1, root 1 |}]
 
 let%expect_test "next takes the most-constrained name last" =
-  let next ~assigned:_ open_names =
-    fst (List.hd (List.rev open_names))
-  in
+  let next ~assigned:_ open_names = fst (List.hd (List.rev open_names)) in
   solve_next ~next:(Some next) repo deps query;
   [%expect {| a 1, b 1, sel b, root 1 |}]
 

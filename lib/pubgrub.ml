@@ -202,8 +202,7 @@ module Make (N : NameType) (V : VersionType) = struct
                 let assigned n = PS.selection state.partial_solution n in
                 let n = pick ~assigned open_names in
                 let matches (m, _) = m == n || N.compare m n = 0 in
-                Option.fold ~none:dflt ~some:fst
-                  (List.find_opt matches open_names)
+                Option.fold ~none:dflt ~some:fst (List.find_opt matches open_names)
           in
           let _, sr = PS.name_range state.partial_solution n in
           let real_vs = List.filter (fun v -> Ranges.contains v sr) (vers n) in
@@ -307,9 +306,9 @@ module Make (N : NameType) (V : VersionType) = struct
     | [ (Pos, n, vs); (Neg, m, us) ] | [ (Neg, m, us); (Pos, n, vs) ] ->
         Format.fprintf fmt "%a %a requires %a %a" pp_name n Ranges.pp vs pp_name m
           Ranges.pp us
-    | [] | [ (Pos, Root, _) ] -> Format.fprintf fmt "version solving failed."
+    | [] | [ (Pos, Root, _) ] -> Format.fprintf fmt "version solving failed"
     | terms ->
-        Format.fprintf fmt "%a is forbidden."
+        Format.fprintf fmt "%a is forbidden"
           Format.(
             pp_print_list
               ~pp_sep:(fun fmt () -> Format.pp_print_string fmt " or ")
@@ -334,7 +333,11 @@ module Make (N : NameType) (V : VersionType) = struct
     in
     let rec explain_incomp fmt incomp =
       match incomp.cause with
-      | NoVersions -> Format.fprintf fmt "%a not available" explain_terms incomp.terms
+      | NoVersions -> (
+          match incomp.terms with
+          | [ (Pos, n, vs) ] ->
+              Format.fprintf fmt "no versions of %a match %a" pp_name n Ranges.pp vs
+          | terms -> explain_terms fmt terms)
       | Dependency (pkg, (n, r)) ->
           Format.fprintf fmt "%a -> %a %a" pp_package pkg pp_name n Ranges.pp r
       | RootDependency (n, r) -> Format.fprintf fmt "root -> %a %a" pp_name n Ranges.pp r
@@ -368,12 +371,12 @@ module Make (N : NameType) (V : VersionType) = struct
                     | false, false -> None
                   with
                   | Some (simple, complex) ->
-                      Format.fprintf fmt "%a\n%a\nThus, %a" explain_incomp complex
+                      Format.fprintf fmt "%a\n%a\nThus, %a." explain_incomp complex
                         explain_incomp simple explain_terms incomp.terms
                   | None ->
                       let line1 = set_line_number cause1 in
                       let line2 = set_line_number cause2 in
-                      Format.fprintf fmt "%a (%d)\n\n%a (%d)\nThus, %a" explain_incomp
+                      Format.fprintf fmt "%a (%d)\n\n%a (%d)\nThus, %a." explain_incomp
                         cause1 line1 explain_incomp cause2 line2 explain_terms
                         incomp.terms))
           | false, _ | _, false -> (
@@ -382,7 +385,7 @@ module Make (N : NameType) (V : VersionType) = struct
               in
               match Hashtbl.find_opt line_numbers derived with
               | Some line ->
-                  Format.fprintf fmt "Because %a and %a (%d), %a" explain_incomp ext
+                  Format.fprintf fmt "Because %a and %a (%d), %a." explain_incomp ext
                     explain_terms derived.terms line explain_terms incomp.terms
               | None -> (
                   match
@@ -400,11 +403,11 @@ module Make (N : NameType) (V : VersionType) = struct
                     | _ -> None
                   with
                   | Some (prior_derived, prior_external) ->
-                      Format.fprintf fmt "%a\nAnd because %a and %a, %a" explain_incomp
+                      Format.fprintf fmt "%a\nAnd because %a and %a, %a." explain_incomp
                         prior_derived explain_incomp prior_external explain_incomp ext
                         explain_terms incomp.terms
                   | _ ->
-                      Format.fprintf fmt "%a\nAnd because %a, %a" explain_incomp derived
+                      Format.fprintf fmt "%a\nAnd because %a, %a." explain_incomp derived
                         explain_incomp ext explain_terms incomp.terms))
           | true, true ->
               Format.fprintf fmt "Because %a and %a, %a." explain_incomp cause1
