@@ -39,7 +39,7 @@ module Make (N : NameType) (V : VersionType) = struct
 
   type cause =
     | NoVersions
-    | Dependency of package * (name * Ranges.t)
+    | Dependency of (N.t * Ranges.t) * (name * Ranges.t)
     | RootDependency of (name * Ranges.t)
     | Derived of incompatibility * incompatibility
 
@@ -69,8 +69,9 @@ module Make (N : NameType) (V : VersionType) = struct
 
   let rec pp_cause fmt = function
     | NoVersions -> Format.pp_print_string fmt "no versions"
-    | Dependency (pkg, (n, r)) ->
-        Format.fprintf fmt "dependency %a -> %a %a" pp_package pkg pp_name n Ranges.pp r
+    | Dependency ((d, dr), (n, r)) ->
+        Format.fprintf fmt "dependency %a %a -> %a %a" N.pp d Ranges.pp dr pp_name n
+          Ranges.pp r
     | RootDependency (n, r) ->
         Format.fprintf fmt "dependency root -> %a %a" pp_name n Ranges.pp r
     | Derived (i1, i2) ->

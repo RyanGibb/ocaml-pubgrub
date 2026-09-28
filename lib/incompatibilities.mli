@@ -13,6 +13,6 @@ module Make (N : Types.NameType) (V : Types.VersionType) : sig
   val find_for_name : name -> t -> incompatibility list
   (** [find_for_name n t]: incompatibilities that mention [n]. *)
 
-  val mem : incompatibility -> t -> bool
-  (** [mem i t]: is some incompatibility already in [t] with the same terms as [i]? *)
+  val remove : incompatibility -> t -> t
+  (** [remove i t]: drop [i] itself, compared physically, from the pool. *)
 end

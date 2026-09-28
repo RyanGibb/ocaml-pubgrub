@@ -20,8 +20,18 @@ module Make (N : NameType) (V : VersionType) = struct
   module Incomp = Incompatibilities.Make (N) (V)
   module PQ = Priority_queue.Make (N)
 
+  module DepMap = Map.Make (struct
+    type t = N.t * N.t
+
+    let compare (a, b) (c, d) =
+      let x = N.compare a c in
+      if x <> 0 then x else N.compare b d
+  end)
+
   type state = {
     incomps : Incomp.t;
+    (* the dependency incompatibilities in [incomps], by depender and dependency *)
+    dep_incomps : incompatibility list DepMap.t;
     decision_level : decision_level;
     partial_solution : PS.t;
     (* Candidates for the next decision, prioritised by the number of
@@ -164,24 +174,55 @@ module Make (N : NameType) (V : VersionType) = struct
   let drop_tautologies =
     List.filter (function Neg, _, r -> not (Ranges.is_empty r) | _ -> true)
 
-  let dependency_incomps ?dense ~vers ~deps n version =
-    let all_versions = vers n in
-    let dense = Option.map (fun d -> d n) dense in
-    List.map
-      (fun (dep_name, dep_range) ->
-        let has_dep v =
-          List.exists
-            (fun (dn, dr) -> N.compare dn dep_name = 0 && Ranges.equal dr dep_range)
-            (deps n v)
-        in
-        let depender_range = Ranges.contiguous ?dense version all_versions has_dep in
+  (* A dependency incompatibility names only versions whose dependencies were
+     asked, as a version listed later need not share the dependency. A version
+     with the same dependency range as others joins their incompatibility, as
+     pubgrub-rs's merge_dependents does, and replaces it in the pool; [dense]
+     then lets the union span, or run up to, versions nothing can be listed
+     between. [None] when the incompatibility already names [version]. *)
+  let add_dependency ?dense ~vers state n version (dep_name, dep_range) =
+    let key = (n, dep_name) in
+    let held = Option.value ~default:[] (DepMap.find_opt key state.dep_incomps) in
+    let old, old_range =
+      match
+        List.find_map
+          (fun i ->
+            match i.cause with
+            | Dependency ((_, r), (_, dr)) when Ranges.equal dr dep_range -> Some (i, r)
+            | _ -> None)
+          held
+      with
+      | Some (i, r) -> (Some i, r)
+      | None -> (None, Ranges.empty)
+    in
+    if Ranges.contains version old_range then (state, None)
+    else
+      let block =
+        match dense with
+        | None -> Ranges.singleton version
+        | Some dense ->
+            let named v = V.compare v version = 0 || Ranges.contains v old_range in
+            Ranges.contiguous ~dense:(dense n) version (vers n) named
+      in
+      let range = Ranges.union old_range block in
+      let incomp =
         {
           terms =
-            drop_tautologies
-              [ (Pos, Name n, depender_range); (Neg, Name dep_name, dep_range) ];
-          cause = Dependency ((n, version), (Name dep_name, dep_range));
-        })
-      (deps n version)
+            drop_tautologies [ (Pos, Name n, range); (Neg, Name dep_name, dep_range) ];
+          cause = Dependency ((n, range), (Name dep_name, dep_range));
+        }
+      in
+      let incomps, held =
+        match old with
+        | None -> (state.incomps, held)
+        | Some o -> (Incomp.remove o state.incomps, List.filter (fun i -> i != o) held)
+      in
+      ( {
+          state with
+          incomps = Incomp.add incomp incomps;
+          dep_incomps = DepMap.add key (incomp :: held) state.dep_incomps;
+        },
+        Some incomp )
 
   let greatest vs = List.hd (List.sort (fun a b -> V.compare b a) vs)
 
@@ -233,14 +274,18 @@ module Make (N : NameType) (V : VersionType) = struct
               Option.value (List.find_opt matches real_vs) ~default:(greatest real_vs)
         in
         debug_printf "trying version %a\n" V.pp version;
-        let dep_incomps =
-          dependency_incomps ?dense ~vers ~deps n version
-          |> List.filter (fun i -> not (Incomp.mem i state.incomps))
+        let state, dep_incomps =
+          List.fold_left
+            (fun (state, added) dep ->
+              match add_dependency ?dense ~vers state n version dep with
+              | state, Some i -> (state, i :: added)
+              | state, None -> (state, added))
+            (state, []) (deps n version)
         in
+        let dep_incomps = List.rev dep_incomps in
         if List.length dep_incomps > 0 then
           debug_printf "dependency incompatibilities\n\t%a\n" pp_incompatibilities
             dep_incomps;
-        let state = add_incomps state dep_incomps in
         let trial_state =
           add_assignment ~vers { state with decision_level } (PS.Decision (n, version))
         in
@@ -295,6 +340,7 @@ module Make (N : NameType) (V : VersionType) = struct
       add_incomps
         {
           incomps = Incomp.empty;
+          dep_incomps = DepMap.empty;
           decision_level = 0;
           partial_solution;
           candidates = PQ.empty;
@@ -339,8 +385,8 @@ module Make (N : NameType) (V : VersionType) = struct
           | [ (Pos, n, vs) ] ->
               Format.fprintf fmt "no versions of %a match %a" pp_name n Ranges.pp vs
           | terms -> explain_terms fmt terms)
-      | Dependency (pkg, (n, r)) ->
-          Format.fprintf fmt "%a -> %a %a" pp_package pkg pp_name n Ranges.pp r
+      | Dependency ((d, dr), (n, r)) ->
+          Format.fprintf fmt "%a %a -> %a %a" N.pp d Ranges.pp dr pp_name n Ranges.pp r
       | RootDependency (n, r) -> Format.fprintf fmt "root -> %a %a" pp_name n Ranges.pp r
       | Derived (cause1, cause2) ->
           (match (is_external cause1, is_external cause2) with

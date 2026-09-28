@@ -28,7 +28,7 @@ module Make (N : NameType) (V : VersionType) : sig
 
   type cause =
     | NoVersions
-    | Dependency of package * (name * Ranges.t)
+    | Dependency of (N.t * Ranges.t) * (name * Ranges.t)
     | RootDependency of (name * Ranges.t)
     | Derived of incompatibility * incompatibility
 

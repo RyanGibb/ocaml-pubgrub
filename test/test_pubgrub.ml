@@ -515,7 +515,9 @@ let%expect_test "partial satisfier - joint constraints" =
     c 1, b 1, a 1
     |}]
 
-let%expect_test "shared dependency - collapsing" =
+(* a 1 shares a 2's dependency, but its dependencies are never asked, so the
+   incompatibility names a 2 alone. *)
+let%expect_test "shared dependency - an unasked version stays out" =
   solve
     [ ("a", "2"); ("a", "1"); ("b", "1") ]
     [ (("a", "2"), ("b", [ "1" ])); (("a", "1"), ("b", [ "1" ])) ]
@@ -530,10 +532,10 @@ let%expect_test "shared dependency - collapsing" =
     deciding on a: 1 ∪ 2
     trying version 2
     dependency incompatibilities
-    (terms: {a 1 ∪ 2, not b 1}, cause: dependency a 2 -> b 1)
+    (terms: {a 2, not b 1}, cause: dependency a 2 -> b 1)
     assignment on level 1: Decision a 2
     unit propagation on: a
-    new assignment on level 1: Derivation b 1 due to incompatibility (terms: {a 1 ∪ 2, not b 1}, cause: dependency a 2 -> b 1)
+    new assignment on level 1: Derivation b 1 due to incompatibility (terms: {a 2, not b 1}, cause: dependency a 2 -> b 1)
     unit propagation on: b
     deciding on b: 1
     trying version 1
@@ -947,6 +949,80 @@ let%expect_test "growth - a key gains a package inside an edge's range" =
   [%expect {|
     w a1, r 1, p 1
     w a1, r 1, p 1
+    |}]
+
+(* a 2 fails on c, and a 1 then shares its dependency on b: the two join one
+   incompatibility, which the explanation names whole. *)
+let%expect_test "shared dependency - merged once both versions are asked" =
+  let repo = [ ("a", "2"); ("a", "1"); ("b", "1"); ("b", "2"); ("c", "1") ] in
+  let deps =
+    [
+      (("a", "2"), ("b", [ "1" ]));
+      (("a", "2"), ("c", [ "2" ]));
+      (("a", "1"), ("b", [ "1" ]));
+    ]
+  in
+  solve repo deps [ ("a", [ "1"; "2" ]); ("c", [ "1" ]) ];
+  solve_next ~next:None repo deps [ ("a", [ "1"; "2" ]); ("b", [ "2" ]); ("c", [ "1" ]) ];
+  [%expect
+    {|
+    initial incompatibilities
+    (terms: {Root *, not a 1 ∪ 2}, cause: dependency root -> a 1 ∪ 2)
+    (terms: {Root *, not c 1}, cause: dependency root -> c 1)
+    unit propagation on: Root
+    new assignment on level 0: Derivation c 1 due to incompatibility (terms: {Root *, not c 1}, cause: dependency root -> c 1)
+    new assignment on level 0: Derivation a 1 ∪ 2 due to incompatibility (terms: {Root *, not a 1 ∪ 2}, cause: dependency root -> a 1 ∪ 2)
+    unit propagation on: a
+    unit propagation on: c
+    deciding on c: 1
+    trying version 1
+    assignment on level 1: Decision c 1
+    unit propagation on: c
+    deciding on a: 1 ∪ 2
+    trying version 2
+    dependency incompatibilities
+    (terms: {a 2, not c 2}, cause: dependency a 2 -> c 2)
+    (terms: {a 2, not b 1}, cause: dependency a 2 -> b 1)
+    not adding decision due to conflict
+    unit propagation on: a
+    new assignment on level 1: Derivation not a 2 due to incompatibility (terms: {a 2, not c 2}, cause: dependency a 2 -> c 2)
+    unit propagation on: a
+    deciding on a: 1
+    trying version 1
+    dependency incompatibilities
+    (terms: {a 1 ∪ 2, not b 1}, cause: dependency a 1 ∪ 2 -> b 1)
+    assignment on level 2: Decision a 1
+    unit propagation on: a
+    new assignment on level 2: Derivation b 1 due to incompatibility (terms: {a 1 ∪ 2, not b 1}, cause: dependency a 1 ∪ 2 -> b 1)
+    unit propagation on: b
+    deciding on b: 1
+    trying version 1
+    assignment on level 3: Decision b 1
+    unit propagation on: b
+    b 1, a 1, c 1
+    Because a 1 ∪ 2 -> b 1 and root -> a 1 ∪ 2, not b 1 is forbidden.
+    And because root -> b 2, version solving failed.
+    |}]
+
+(* Every version of a needs the missing b 2. With [dense], the versions that
+   join the incompatibility are spanned by one interval. *)
+let%expect_test "shared dependency - merged over dense versions" =
+  let run dense =
+    Pubgrub.set_debug false;
+    let vers = function "a" -> [ "1"; "2"; "3" ] | "b" -> [ "1" ] | _ -> [] in
+    let deps n _ = if n = "a" then [ ("b", pts [ "2" ]) ] else [] in
+    let result = Solver.solve ?dense ~vers ~deps [ ("a", pts [ "1"; "2"; "3" ]) ] in
+    Format.printf "%a\n" pp_result result;
+    Pubgrub.set_debug true
+  in
+  run None;
+  run (Some (fun _ _ _ -> true));
+  [%expect
+    {|
+    Because a 1 ∪ 2 ∪ 3 -> b 2 and no versions of b match 2, a 1 ∪ 2 ∪ 3 is forbidden.
+    And because root -> a 1 ∪ 2 ∪ 3, version solving failed.
+    Because a [1, 3] -> b 2 and no versions of b match 2, a [1, 3] is forbidden.
+    And because root -> a 1 ∪ 2 ∪ 3, version solving failed.
     |}]
 
 (* 1 lacks the dependency; nothing can be listed between 2 and 4. *)
