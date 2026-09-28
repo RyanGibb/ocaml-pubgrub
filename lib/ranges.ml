@@ -9,11 +9,14 @@ module Make (V : OrderedType) = struct
   type bound = Unbounded | Included of V.t | Excluded of V.t
   type segment = bound * bound
 
-  (* A sorted list of non-overlapping (lower, upper) segments. *)
-  type t = segment list
+  (* Sorted, non-overlapping (lower, upper) segments, in an array so that
+     [contains] can search them. *)
+  type t = segment array
 
-  let empty = []
-  let full = [ (Unbounded, Unbounded) ]
+  let of_segments l = Array.of_list l
+  let segments = Array.to_list
+  let empty = [||]
+  let full = [| (Unbounded, Unbounded) |]
 
   let equal_bound a b =
     match (a, b) with
@@ -22,20 +25,20 @@ module Make (V : OrderedType) = struct
     | _ -> false
 
   let equal a b =
-    List.length a = List.length b
-    && List.for_all2
+    Array.length a = Array.length b
+    && Array.for_all2
          (fun (lo1, hi1) (lo2, hi2) -> equal_bound lo1 lo2 && equal_bound hi1 hi2)
          a b
 
-  let is_empty = function [] -> true | _ -> false
-  let singleton v = [ (Included v, Included v) ]
-  let higher_than v = [ (Included v, Unbounded) ]
-  let strictly_higher_than v = [ (Excluded v, Unbounded) ]
-  let lower_than v = [ (Unbounded, Included v) ]
-  let strictly_lower_than v = [ (Unbounded, Excluded v) ]
+  let is_empty a = Array.length a = 0
+  let singleton v = [| (Included v, Included v) |]
+  let higher_than v = [| (Included v, Unbounded) |]
+  let strictly_higher_than v = [| (Excluded v, Unbounded) |]
+  let lower_than v = [| (Unbounded, Included v) |]
+  let strictly_lower_than v = [| (Unbounded, Excluded v) |]
 
   let between lo hi =
-    if V.compare lo hi >= 0 then empty else [ (Included lo, Excluded hi) ]
+    if V.compare lo hi >= 0 then empty else [| (Included lo, Excluded hi) |]
 
   (* The block of [pred]-satisfying versions of [sorted] around [current]
      names no version outside [sorted]: one listed later need not satisfy
@@ -71,10 +74,12 @@ module Make (V : OrderedType) = struct
           | hi, [] -> [ (Included lo, top hi) ]
           | hi, rest -> (Included lo, Included hi) :: runs rest)
     in
-    runs (List.rev_append lower (current :: upper))
+    of_segments (runs (List.rev_append lower (current :: upper)))
 
   let of_list vs =
-    List.sort_uniq V.compare vs |> List.map (fun v -> (Included v, Included v))
+    List.sort_uniq V.compare vs
+    |> List.map (fun v -> (Included v, Included v))
+    |> of_segments
 
   let flip = function
     | Unbounded -> Unbounded
@@ -133,7 +138,7 @@ module Make (V : OrderedType) = struct
         (* Two excluded bounds at the same point leave a gap *)
         V.compare a b > 0
 
-  let complement segments =
+  let complement a =
     let rec aux lo = function
       | [] -> ( match lo with Unbounded -> [] | _ -> [ (lo, Unbounded) ])
       | (seg_lo, seg_hi) :: rest ->
@@ -146,80 +151,109 @@ module Make (V : OrderedType) = struct
           in
           seg @ aux (flip seg_hi) rest
     in
-    match segments with [] -> [ (Unbounded, Unbounded) ] | _ -> aux Unbounded segments
+    match segments a with [] -> full | segments -> of_segments (aux Unbounded segments)
+
+  (* the segments of a list built newest first *)
+  let of_rev = function
+    | [] -> empty
+    | first :: _ as l ->
+        let n = List.length l in
+        let a = Array.make n first in
+        List.iteri (fun i seg -> a.(n - 1 - i) <- seg) l;
+        a
 
   let union a b =
-    (* Merge two sorted segment lists, combining overlapping/adjacent segments *)
-    let rec merge la lb =
-      match (la, lb) with
-      | [], r | r, [] -> r
-      | (ls, le) :: la', (rs, re) :: lb' ->
-          if cmp_lo ls rs <= 0 then (ls, le) :: merge la' lb else (rs, re) :: merge la lb'
+    (* Merge the two segment arrays by lower bound, collapsing each segment
+       into the last one taken where there is no gap between them *)
+    let na = Array.length a and nb = Array.length b in
+    let take ((s2, e2) as seg) = function
+      | (s1, e1) :: rest when adjacent_or_overlapping e1 s2 ->
+          (s1, if cmp_hi e1 e2 >= 0 then e1 else e2) :: rest
+      | acc -> seg :: acc
     in
-    let sorted = merge a b in
-    (* Now collapse overlapping/adjacent segments *)
-    let rec collapse = function
-      | [] -> []
-      | [ seg ] -> [ seg ]
-      | (s1, e1) :: (s2, e2) :: rest ->
-          if adjacent_or_overlapping e1 s2 then
-            collapse ((s1, if cmp_hi e1 e2 >= 0 then e1 else e2) :: rest)
-          else (s1, e1) :: collapse ((s2, e2) :: rest)
+    let rec aux i j acc =
+      if i < na && (j >= nb || cmp_lo (fst a.(i)) (fst b.(j)) <= 0) then
+        aux (i + 1) j (take a.(i) acc)
+      else if j < nb then aux i (j + 1) (take b.(j) acc)
+      else acc
     in
-    collapse sorted
+    of_rev (aux 0 0 [])
 
   let intersection a b =
     (* Two-pointer walk: at each step, clip the current segments against
        each other and advance whichever ends first. *)
-    let rec aux la lb =
-      match (la, lb) with
-      | [], _ | _, [] -> []
-      | (ls, le) :: la', (rs, re) :: rb' ->
-          let lo = if cmp_lo ls rs >= 0 then ls else rs in
-          let advance_left = cmp_hi le re <= 0 in
-          let hi = if advance_left then le else re in
-          let seg = if valid lo hi then [ (lo, hi) ] else [] in
-          let rest = if advance_left then aux la' lb else aux la rb' in
-          seg @ rest
+    let na = Array.length a and nb = Array.length b in
+    let rec aux i j acc =
+      if i >= na || j >= nb then acc
+      else
+        let ls, le = a.(i) and rs, re = b.(j) in
+        let lo = if cmp_lo ls rs >= 0 then ls else rs in
+        let advance_left = cmp_hi le re <= 0 in
+        let hi = if advance_left then le else re in
+        let acc = if valid lo hi then (lo, hi) :: acc else acc in
+        if advance_left then aux (i + 1) j acc else aux i (j + 1) acc
     in
-    aux a b
+    of_rev (aux 0 0 [])
+
+  (* [intersection]'s walk, stopping at the first segment it would keep *)
+  let is_disjoint a b =
+    let na = Array.length a and nb = Array.length b in
+    let rec aux i j =
+      i >= na || j >= nb
+      ||
+      let ls, le = a.(i) and rs, re = b.(j) in
+      let lo = if cmp_lo ls rs >= 0 then ls else rs in
+      let advance_left = cmp_hi le re <= 0 in
+      let hi = if advance_left then le else re in
+      (not (valid lo hi)) && if advance_left then aux (i + 1) j else aux i (j + 1)
+    in
+    aux 0 0
 
   let difference a b = intersection a (complement b)
 
-  let contains v segments =
-    List.exists
-      (fun (lo, hi) ->
-        (match lo with
-          | Unbounded -> true
-          | Included l -> V.compare l v <= 0
-          | Excluded l -> V.compare l v < 0)
-        &&
-        match hi with
-        | Unbounded -> true
-        | Included h -> V.compare v h <= 0
-        | Excluded h -> V.compare v h < 0)
-      segments
+  (* The segments' lower bounds ascend, so those at or below [v] are a prefix,
+     and only the last of them can hold [v]. *)
+  let contains v a =
+    let lo_le = function
+      | Unbounded -> true
+      | Included l -> V.compare l v <= 0
+      | Excluded l -> V.compare l v < 0
+    in
+    let le_hi = function
+      | Unbounded -> true
+      | Included h -> V.compare v h <= 0
+      | Excluded h -> V.compare v h < 0
+    in
+    (* the first segment in [lo, hi) whose lower bound is above [v] *)
+    let rec search lo hi =
+      if lo >= hi then lo
+      else
+        let mid = (lo + hi) / 2 in
+        if lo_le (fst a.(mid)) then search (mid + 1) hi else search lo mid
+    in
+    let i = search 0 (Array.length a) in
+    i > 0 && le_hi (snd a.(i - 1))
 
   let subset_of a b =
     (* Every segment in a must be fully contained in some segment in b *)
-    let rec aux la lb =
-      match (la, lb) with
-      | [], _ -> true
-      | _, [] -> false
-      | (ss, se) :: la', (cs, ce) :: cb' ->
-          if cmp_lo cs ss <= 0 && cmp_hi se ce <= 0 then
-            (* subset segment fits in containing segment *)
-            aux la' lb
-          else if not (valid ss ce) then
-            (* containing segment ends before subset segment starts, advance *)
-            aux la cb'
-          else false
+    let na = Array.length a and nb = Array.length b in
+    let rec aux i j =
+      if i >= na then true
+      else if j >= nb then false
+      else
+        let ss, se = a.(i) and cs, ce = b.(j) in
+        if cmp_lo cs ss <= 0 && cmp_hi se ce <= 0 then
+          (* subset segment fits in containing segment *)
+          aux (i + 1) j
+        else if not (valid ss ce) then
+          (* containing segment ends before subset segment starts, advance *)
+          aux i (j + 1)
+        else false
     in
-    aux a b
+    aux 0 0
 
-  let is_disjoint a b = is_empty (intersection a b)
-
-  let pp fmt = function
+  let pp fmt a =
+    match segments a with
     | [] -> Format.pp_print_string fmt "∅"
     | [ (Unbounded, Unbounded) ] -> Format.pp_print_string fmt "*"
     | segments ->

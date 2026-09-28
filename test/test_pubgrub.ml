@@ -1057,3 +1057,27 @@ let%expect_test "contiguous - a dense block runs up to the next listed version" 
     [2, 4]
     [2, 5)
     |}]
+
+(* Each kind of bound, at the ends and inside of a range of several segments. *)
+let%expect_test "contains - bounds of each kind" =
+  let open Solver.Ranges in
+  let r =
+    List.fold_left union empty
+      [
+        strictly_lower_than "1";
+        between "2" "3";
+        singleton "3";
+        intersection (strictly_higher_than "4") (lower_than "5");
+        higher_than "7";
+      ]
+  in
+  Format.printf "%a:" pp r;
+  List.iter
+    (fun v -> if contains v r then Format.printf " %s" v)
+    [ "0"; "1"; "2"; "25"; "3"; "35"; "4"; "45"; "5"; "6"; "7"; "8" ];
+  Format.printf "\n%b %b\n" (contains "1" empty) (contains "1" full);
+  [%expect
+    {|
+    (-∞, 1) ∪ [2, 3] ∪ (4, 5] ∪ [7, +∞): 0 2 25 3 45 5 7 8
+    false true
+    |}]
