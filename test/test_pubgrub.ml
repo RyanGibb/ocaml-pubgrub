@@ -493,26 +493,29 @@ let%expect_test "partial satisfier - joint constraints" =
     conflict resolution on: (terms: {not z 4, not b 2, not c 2, a 2}, cause: ((terms: {z 2 ∪ 3, not b 2, not c 2}, cause: ((terms: {z 2, not b 2}, cause: dependency z 2 -> b 2) and (terms: {z 3, not c 2}, cause: dependency z 3 -> c 2))) and (terms: {a 2, not z 2 ∪ 3 ∪ 4}, cause: dependency a 2 -> z 2 ∪ 3 ∪ 4)))
     satisfiying assignment on level 3: Derivation z 1 ∪ 2 ∪ 3 due to incompatibility (terms: {a 2, not z 1 ∪ 2 ∪ 3}, cause: dependency a 2 -> z 1 ∪ 2 ∪ 3)
     prior cause (terms: {not b 2, not c 2, a 2}, cause: ((terms: {not z 4, not b 2, not c 2, a 2}, cause: ((terms: {z 2 ∪ 3, not b 2, not c 2}, cause: ((terms: {z 2, not b 2}, cause: dependency z 2 -> b 2) and (terms: {z 3, not c 2}, cause: dependency z 3 -> c 2))) and (terms: {a 2, not z 2 ∪ 3 ∪ 4}, cause: dependency a 2 -> z 2 ∪ 3 ∪ 4))) and (terms: {a 2, not z 1 ∪ 2 ∪ 3}, cause: dependency a 2 -> z 1 ∪ 2 ∪ 3)))
+    z has been undone by 5 conflicts
     conflict resolution on: (terms: {not b 2, not c 2, a 2}, cause: ((terms: {not z 4, not b 2, not c 2, a 2}, cause: ((terms: {z 2 ∪ 3, not b 2, not c 2}, cause: ((terms: {z 2, not b 2}, cause: dependency z 2 -> b 2) and (terms: {z 3, not c 2}, cause: dependency z 3 -> c 2))) and (terms: {a 2, not z 2 ∪ 3 ∪ 4}, cause: dependency a 2 -> z 2 ∪ 3 ∪ 4))) and (terms: {a 2, not z 1 ∪ 2 ∪ 3}, cause: dependency a 2 -> z 1 ∪ 2 ∪ 3)))
     satisfiying assignment on level 3: Decision a 2
+    b has taken part in 5 conflicts
+    c has taken part in 5 conflicts
     backtracking to level 0
     solution: (0: Derivation a 1 ∪ 2 due to incompatibility (terms: {Root *, not a 1 ∪ 2}, cause: dependency root -> a 1 ∪ 2)), (0: Derivation b 1 due to incompatibility (terms: {Root *, not b 1}, cause: dependency root -> b 1)), (0: Derivation c 1 due to incompatibility (terms: {Root *, not c 1}, cause: dependency root -> c 1)), (0: Decision root)
     new incompatibility (terms: {not b 2, not c 2, a 2}, cause: ((terms: {not z 4, not b 2, not c 2, a 2}, cause: ((terms: {z 2 ∪ 3, not b 2, not c 2}, cause: ((terms: {z 2, not b 2}, cause: dependency z 2 -> b 2) and (terms: {z 3, not c 2}, cause: dependency z 3 -> c 2))) and (terms: {a 2, not z 2 ∪ 3 ∪ 4}, cause: dependency a 2 -> z 2 ∪ 3 ∪ 4))) and (terms: {a 2, not z 1 ∪ 2 ∪ 3}, cause: dependency a 2 -> z 1 ∪ 2 ∪ 3)))
     new assignment on level 0: Derivation not a 2 due to incompatibility (terms: {not b 2, not c 2, a 2}, cause: ((terms: {not z 4, not b 2, not c 2, a 2}, cause: ((terms: {z 2 ∪ 3, not b 2, not c 2}, cause: ((terms: {z 2, not b 2}, cause: dependency z 2 -> b 2) and (terms: {z 3, not c 2}, cause: dependency z 3 -> c 2))) and (terms: {a 2, not z 2 ∪ 3 ∪ 4}, cause: dependency a 2 -> z 2 ∪ 3 ∪ 4))) and (terms: {a 2, not z 1 ∪ 2 ∪ 3}, cause: dependency a 2 -> z 1 ∪ 2 ∪ 3)))
     unit propagation on: a
-    deciding on a: 1
-    trying version 1
-    assignment on level 1: Decision a 1
-    unit propagation on: a
     deciding on b: 1
     trying version 1
-    assignment on level 2: Decision b 1
+    assignment on level 1: Decision b 1
     unit propagation on: b
     deciding on c: 1
     trying version 1
-    assignment on level 3: Decision c 1
+    assignment on level 2: Decision c 1
     unit propagation on: c
-    c 1, b 1, a 1
+    deciding on a: 1
+    trying version 1
+    assignment on level 3: Decision a 1
+    unit propagation on: a
+    a 1, c 1, b 1
     |}]
 
 (* a 1 shares a 2's dependency, but its dependencies are never asked, so the
@@ -1056,6 +1059,29 @@ let%expect_test "contiguous - a dense block runs up to the next listed version" 
     2 ∪ 3 ∪ 4
     [2, 4]
     [2, 5)
+    |}]
+
+(* Every version of big needs e 1, which d 2's e 2 rules out, so each is tried
+   and fails in turn, and d 2 is then undone. Past five such conflicts big is
+   decided before d and e, which fewest-first would decide before it; a [next]
+   hook that takes the head of the open names keeps fewest-first. *)
+let%expect_test "conflict priority - a name often undone is decided first" =
+  let repo =
+    [ ("d", "1"); ("d", "2"); ("e", "1"); ("e", "2") ]
+    @ List.map (fun v -> ("big", v)) [ "1"; "2"; "3"; "4"; "5"; "6" ]
+  in
+  let deps =
+    (("d", "2"), ("e", [ "2" ]))
+    :: List.map (fun v -> (("big", v), ("e", [ "1" ]))) [ "1"; "2"; "3"; "4"; "5"; "6" ]
+  in
+  let query = [ ("d", [ "1"; "2" ]); ("big", [ "1"; "2"; "3"; "4"; "5"; "6" ]) ] in
+  solve_next ~next:None repo deps query;
+  solve_next
+    ~next:(Some (fun ~assigned:_ open_names -> fst (List.hd open_names)))
+    repo deps query;
+  [%expect {|
+    d 1, e 1, big 6
+    big 6, e 1, d 1
     |}]
 
 (* Each kind of bound, at the ends and inside of a range of several segments. *)

@@ -35,10 +35,12 @@ module Make (N : NameType) (V : VersionType) : sig
     ((N.t * V.t) list, incompatibility) Result.t
   (** [next ~assigned open_names] picks which name to decide next. [open_names] is the
       non-empty list of names still awaiting a decision, each with how many versions the
-      accumulated constraints still allow it, ordered by the solver's own preference
-      (fewest first). Which one is taken is only ever a heuristic -- every open name is a
-      sound answer -- so the hook is free to impose any order it likes; a result outside
-      the list is discarded and the solver's own choice stands.
+      accumulated constraints still allow it, fewest first. Which one is taken is only
+      ever a heuristic -- every open name is a sound answer -- so the hook is free to
+      impose any order it likes; a result outside the list is discarded and the first
+      stands. Omitted, the solver takes the name with fewest versions, save that, as uv
+      does, a name whose decisions conflicts have undone five times comes first, and then
+      one whose decisions have taken part in five conflicts.
 
       [choose ~assigned n candidates] then picks which of [candidates] to try for [n].
       [candidates] is non-empty and holds the versions of [n] the accumulated constraints
@@ -46,7 +48,7 @@ module Make (N : NameType) (V : VersionType) : sig
       widen the search. Omitted, the solver takes the greatest candidate by [V.compare].
 
       Both hooks receive [assigned], what the partial solution currently says about any
-      name. Omitting them leaves the solver's behaviour exactly as it was.
+      name. Omitting them leaves both choices to the solver.
 
       The lookups may be those of an instance still being loaded, provided that:
       - [vers n] may grow between calls, and only grow;

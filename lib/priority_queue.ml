@@ -1,17 +1,17 @@
-module Make (N : Types.NameType) = struct
+module Make (N : Types.NameType) (P : Set.OrderedType) = struct
   module NMap = Map.Make (N)
 
   module Entry = struct
-    type t = int * N.t
+    type t = P.t * N.t
 
     let compare (p1, n1) (p2, n2) =
-      let c = Int.compare p1 p2 in
+      let c = P.compare p1 p2 in
       if c <> 0 then c else N.compare n1 n2
   end
 
   module EntrySet = Set.Make (Entry)
 
-  type t = { priority : int NMap.t; by_priority : EntrySet.t }
+  type t = { priority : P.t NMap.t; by_priority : EntrySet.t }
 
   let empty = { priority = NMap.empty; by_priority = EntrySet.empty }
 

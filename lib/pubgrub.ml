@@ -18,7 +18,22 @@ module Make (N : NameType) (V : VersionType) = struct
   include Types.Make (N) (V)
   module PS = Partial_solution.Make (N) (V)
   module Incomp = Incompatibilities.Make (N) (V)
-  module PQ = Priority_queue.Make (N)
+  module NameMap = Map.Make (N)
+
+  (* A candidate's tier, then its count of versions. *)
+  module PQ =
+    Priority_queue.Make
+      (N)
+      (struct
+        type t = int * int
+
+        let compare (t, c) (t', c') =
+          let x = Int.compare t t' in
+          if x <> 0 then x else Int.compare c c'
+      end)
+
+  (* uv's CONFLICT_THRESHOLD *)
+  let conflict_threshold = 5
 
   module DepMap = Map.Make (struct
     type t = N.t * N.t
@@ -37,15 +52,68 @@ module Make (N : NameType) (V : VersionType) = struct
     (* Candidates for the next decision, prioritised by the number of
        available versions remaining under the current constraints. *)
     candidates : PQ.t;
+    (* whether conflicts reorder decisions, which they do where no [next] hook
+       orders them *)
+    bump : bool;
+    (* for each name, how many conflicts undid its decision, and how many
+       conflicts its decision took part in, as uv's ConflictTracker counts *)
+    affected : int NameMap.t;
+    culprit : int NameMap.t;
   }
 
   let add_incomp state incomp = { state with incomps = Incomp.add incomp state.incomps }
   let add_incomps state incomps = List.fold_left add_incomp state incomps
 
-  (* Count of available versions for [n] in the current partial solution. *)
+  (* As uv does, a name conflicts have often undone is decided before the
+     rest, so that its next conflict undoes fewer decisions, and then one
+     that has often caused conflicts. *)
+  let tier state n =
+    let past tally =
+      Option.value ~default:0 (NameMap.find_opt n tally) >= conflict_threshold
+    in
+    if not state.bump then 2
+    else if past state.affected then 0
+    else if past state.culprit then 1
+    else 2
+
+  (* [n]'s tier, and its count of available versions in the current partial
+     solution. *)
   let count_for ~vers state n =
     let _, sr = PS.name_range state.partial_solution n in
-    List.length (List.filter (fun v -> Ranges.contains v sr) (vers n))
+    (tier state n, List.length (List.filter (fun v -> Ranges.contains v sr) (vers n)))
+
+  (* A conflict that undid [affected]'s decision, recorded against it and
+     against every other name in [incomp]. A candidate that reaches the
+     threshold takes its new tier at once. *)
+  let record_conflict ~vers state affected incomp =
+    let others =
+      List.filter_map
+        (function _, Name m, _ when N.compare m affected <> 0 -> Some m | _ -> None)
+        incomp.terms
+    in
+    match others with
+    | _ when not state.bump -> state
+    | [] -> state
+    | _ ->
+        let add what (tally, crossed) n =
+          let k = 1 + Option.value ~default:0 (NameMap.find_opt n tally) in
+          if k = conflict_threshold then debug_printf "%a %s %d conflicts\n" N.pp n what k;
+          (NameMap.add n k tally, if k = conflict_threshold then n :: crossed else crossed)
+        in
+        let culprit, crossed =
+          List.fold_left (add "has taken part in") (state.culprit, []) others
+        in
+        let affected, crossed =
+          add "has been undone by" (state.affected, crossed) affected
+        in
+        let state = { state with affected; culprit } in
+        let pending = PS.undecided_pos_names state.partial_solution in
+        List.fold_left
+          (fun s n ->
+            if PS.NameSet.mem n pending then
+              { s with candidates = PQ.update s.candidates n (count_for ~vers s n) }
+            else s)
+          state crossed
 
   (* Push an assignment onto the partial solution at the current decision
      level and refresh the candidates priority queue. *)
@@ -93,12 +161,18 @@ module Make (N : NameType) (V : VersionType) = struct
         | Some ((satisfier, satisfier_decision_level), previous_satisfier_level) -> (
             debug_printf "satisfiying assignment on level %d: %a\n"
               satisfier_decision_level PS.pp_assignment satisfier;
+            let name = PS.assignment_name satisfier in
             let term =
-              let name = PS.assignment_name satisfier in
               List.find (fun t -> compare_name (term_name t) name = 0) incomp.terms
+            in
+            let record state incomp =
+              match name with
+              | Name n -> record_conflict ~vers state n incomp
+              | Root -> state
             in
             match (satisfier, satisfier_decision_level != previous_satisfier_level) with
             | PS.Decision _, _ | PS.RootDecision, _ | _, true ->
+                let state = record state incomp in
                 debug_printf "backtracking to level %d\n" previous_satisfier_level;
                 let partial_solution, touched =
                   PS.backtrack state.partial_solution previous_satisfier_level
@@ -137,7 +211,8 @@ module Make (N : NameType) (V : VersionType) = struct
                   }
                 in
                 debug_printf "prior cause %a\n" pp_incompatibility prior_cause;
-                conflict_resolution ~vers state original_incomp prior_cause))
+                conflict_resolution ~vers (record state prior_cause) original_incomp
+                  prior_cause))
 
   let rec unit_propagation ~vers state changed : (state, incompatibility) Result.t =
     match changed with
@@ -239,7 +314,7 @@ module Make (N : NameType) (V : VersionType) = struct
                    name still in the queue is a sound answer; one outside it is
                    not, and leaves the queue's own choice standing *)
                 let open_names =
-                  List.map (fun (c, n) -> (n, c)) (PQ.to_list state.candidates)
+                  List.map (fun ((_, c), n) -> (n, c)) (PQ.to_list state.candidates)
                 in
                 let assigned n = PS.selection state.partial_solution n in
                 let n = pick ~assigned open_names in
@@ -261,7 +336,7 @@ module Make (N : NameType) (V : VersionType) = struct
           incomp;
         let state = add_incomp state incomp in
         Some (Name n, state)
-    | _ ->
+    | _ -> (
         let version =
           match choose with
           | None -> greatest real_vs
@@ -289,21 +364,22 @@ module Make (N : NameType) (V : VersionType) = struct
         let trial_state =
           add_assignment ~vers { state with decision_level } (PS.Decision (n, version))
         in
-        let conflicts =
-          List.exists
+        let conflict =
+          List.find_opt
             (fun i ->
               match PS.incompatibility_status trial_state.partial_solution i with
               | All_satisfied -> true
               | _ -> false)
             dep_incomps
         in
-        if conflicts then (
-          debug_printf "not adding decision due to conflict\n";
-          Some (Name n, state))
-        else (
-          debug_printf "assignment on level %d: %a\n" decision_level PS.pp_assignment
-            (PS.Decision (n, version));
-          Some (Name n, trial_state))
+        match conflict with
+        | Some i ->
+            debug_printf "not adding decision due to conflict\n";
+            Some (Name n, record_conflict ~vers state n i)
+        | None ->
+            debug_printf "assignment on level %d: %a\n" decision_level PS.pp_assignment
+              (PS.Decision (n, version));
+            Some (Name n, trial_state))
 
   let extract_resolution state =
     List.filter_map
@@ -344,6 +420,9 @@ module Make (N : NameType) (V : VersionType) = struct
           decision_level = 0;
           partial_solution;
           candidates = PQ.empty;
+          bump = Option.is_none next;
+          affected = NameMap.empty;
+          culprit = NameMap.empty;
         }
         incomps
     in

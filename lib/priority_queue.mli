@@ -1,23 +1,23 @@
-(** Min priority queue keyed on a name with an integer priority. Ties broken by the name's
+(** Min priority queue keyed on a name with an ordered priority. Ties broken by the name's
     own [compare]. All operations are O(log n). *)
 
-module Make (N : Types.NameType) : sig
+module Make (N : Types.NameType) (P : Set.OrderedType) : sig
   type t
 
   val empty : t
 
-  val insert : t -> N.t -> int -> t
+  val insert : t -> N.t -> P.t -> t
   (** [insert pq n p]: associate name [n] with priority [p]. *)
 
   val remove : t -> N.t -> t
   (** [remove pq n]: drop [n] from the queue if present. *)
 
-  val update : t -> N.t -> int -> t
+  val update : t -> N.t -> P.t -> t
   (** [update pq n p]: set [n]'s priority to [p], replacing any existing entry. *)
 
-  val min_elt : t -> (int * N.t) option
+  val min_elt : t -> (P.t * N.t) option
   (** [min_elt pq]: the smallest [(priority, name)] pair, or [None] when empty. *)
 
-  val to_list : t -> (int * N.t) list
+  val to_list : t -> (P.t * N.t) list
   (** [to_list pq]: every [(priority, name)] pair in priority order. O(n). *)
 end
